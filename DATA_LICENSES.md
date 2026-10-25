@@ -20,6 +20,15 @@ and stores is *not* covered by that license. It comes from two third parties, ea
 - The data is reformatted and summarised here; this project is not endorsed by MET Norway.
   It is not affiliated with Yr or NRK.
 
+## Map tiles and libraries (not weather data)
+
+- Map tiles: **&copy; OpenStreetMap contributors** (data under the [ODbL](https://www.openstreetmap.org/copyright)) and
+  **&copy; CARTO** basemaps (<https://carto.com/basemaps/>, free for non-commercial use with a key).
+  If no CARTO key is configured the site falls back to the standard OpenStreetMap tile server
+  (see its [tile usage policy](https://operations.osmfoundation.org/policies/tiles/)).
+- [Leaflet](https://leafletjs.com/) (BSD-2-Clause) draws the map; [Chart.js](https://www.chartjs.org/) (MIT) draws the charts.
+  Both are loaded from a CDN. The weather icons are drawn inline by this project.
+
 ## Derived data
 
 - The Parquet snapshots on the `data` branch are derived from the two sources above (parsed, time-aligned,

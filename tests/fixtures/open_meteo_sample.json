@@ -1,0 +1,50 @@
+{
+ "latitude": 50.087627,
+ "longitude": 14.409841,
+ "generationtime_ms": 0.18036365509033203,
+ "utc_offset_seconds": 0,
+ "timezone": "GMT",
+ "timezone_abbreviation": "GMT",
+ "elevation": 205.0,
+ "hourly_units": {
+  "time": "iso8601",
+  "precipitation": "mm",
+  "precipitation_probability": "%",
+  "temperature_2m": "\u00b0C"
+ },
+ "hourly": {
+  "time": [
+   "2026-10-25T00:00",
+   "2026-10-25T01:00",
+   "2026-10-25T02:00",
+   "2026-10-25T03:00",
+   "2026-10-25T04:00",
+   "2026-10-25T05:00"
+  ],
+  "precipitation": [
+   0.0,
+   0.2,
+   0.0,
+   null,
+   1.4,
+   0.0
+  ],
+  "precipitation_probability": [
+   0,
+   40,
+   0,
+   10,
+   80,
+   0
+  ],
+  "temperature_2m": [
+   5.0,
+   5.1,
+   5.1,
+   5.2,
+   5.5,
+   6.1
+  ]
+ },
+ "_note": "Trimmed copy of a real response; precipitation values edited by hand so tests are meaningful."
+}

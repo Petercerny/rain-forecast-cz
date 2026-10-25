@@ -1,0 +1,89 @@
+/* Mobile first: one column, fluid width, no horizontal scrolling. */
+:root {
+  --bg: #f6f8fb;
+  --card: #ffffff;
+  --text: #17202a;
+  --muted: #5b6672;
+  --line: #d9e0e8;
+  --link: #1a5fb4;
+  --om: #2a6fdb;   /* Open-Meteo */
+  --met: #e0861a;  /* MET Norway */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11161c;
+    --card: #1a2129;
+    --text: #e8edf2;
+    --muted: #9aa7b4;
+    --line: #2d3742;
+    --link: #7db3f5;
+    --om: #5b9bff;
+    --met: #f0a040;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header, main, footer { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 20px; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+.sub, .note, .status { color: var(--muted); font-size: 0.875rem; margin: 4px 0; }
+a { color: var(--link); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.picker { display: block; margin-top: 16px; }
+.picker span { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 4px; }
+select {
+  width: 100%;
+  font: inherit;
+  padding: 10px 12px;
+  min-height: 44px;            /* comfortable tap target */
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.summary {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 16px 0 4px;
+}
+.ai-label { font-size: 0.8125rem; color: var(--muted); margin: 4px 0 0; }
+
+.chart-box {
+  position: relative;
+  height: 300px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 0.8125rem; color: var(--muted); font-weight: 600; }
+
+footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  padding-bottom: 32px;
+  border-top: 1px solid var(--line);
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+footer p { margin: 8px 0; }
+
+@media (min-width: 600px) {
+  .chart-box { height: 360px; }
+}

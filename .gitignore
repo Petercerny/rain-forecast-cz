@@ -1,0 +1,26 @@
+# Secrets / local config
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local data: snapshots live on the separate `data` branch, never on main
+data/
+
+# Intermediate + generated output (rebuilt by the pipeline)
+build/
+site/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local config
+.claude/

@@ -1,0 +1,115 @@
+"""Step 2: run sql/forecast_summary.sql with DuckDB and write build/forecast.json.
+
+The SQL does the real work (joining the sources, daily totals, peak hours). This file only
+feeds it parameters and turns the resulting tables into a JSON file for the next steps.
+
+Usage:  python -m src.transform
+"""
+import json
+import sys
+from datetime import datetime, timezone
+
+import duckdb
+
+from src.common import BUILD_DIR, SNAPSHOT_DIR, SQL_DIR, load_locations, load_settings
+
+
+def _iso(ts) -> str | None:
+    return None if ts is None else ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rows(con, table: str) -> list[dict]:
+    """Read a whole DuckDB table as a list of dicts (column name -> value)."""
+    cur = con.execute(f"SELECT * FROM {table}")
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row)) for row in cur.fetchall()]
+
+
+def run_sql(snapshot_dir=SNAPSHOT_DIR, now: datetime | None = None) -> duckdb.DuckDBPyConnection:
+    """Execute the SQL file and return the connection holding the result tables."""
+    settings = load_settings()
+    now = now or datetime.now(timezone.utc)
+    con = duckdb.connect()  # in-memory database, nothing is kept between runs
+    # Variables are read inside the SQL with getvariable('...').
+    con.execute("SET VARIABLE snapshot_glob = ?", [str(snapshot_dir / "*" / "*" / "*.parquet")])
+    con.execute("SET VARIABLE now_utc = ?::TIMESTAMPTZ", [now.isoformat()])
+    con.execute("SET VARIABLE window_hours = ?", [settings["window_hours"]])
+    con.execute("SET VARIABLE stale_after_hours = ?", [settings["stale_after_hours"]])
+    con.execute((SQL_DIR / "forecast_summary.sql").read_text(encoding="utf-8"))
+    return con
+
+
+def build_forecast(con, now: datetime) -> dict:
+    """Collect the SQL result tables into one JSON-friendly dict, grouped by location."""
+    hourly = _rows(con, "hourly")
+    daily = _rows(con, "daily")
+    peaks = _rows(con, "peak_hours")
+    totals = {r["location"]: r for r in _rows(con, "location_totals")}
+
+    locations = []
+    for loc in load_locations():  # config order = site order
+        name = loc["name"]
+        t = totals.get(name)
+        locations.append(
+            {
+                "name": name,
+                "lat": loc["lat"],
+                "lon": loc["lon"],
+                "has_data": t is not None,
+                "totals": None if t is None else {
+                    "hours": t["hours"],
+                    "open_meteo_mm": t["om_total_mm"],
+                    "met_no_mm": t["met_total_mm"],
+                    "diff_mm": t["diff_total_mm"],
+                    "max_prob_pct": t["max_prob_pct"],
+                },
+                "sources": {  # when each source was last fetched; null = no usable data
+                    "open-meteo": None if t is None else _iso(t["om_fetched_at"]),
+                    "met-no": None if t is None else _iso(t["met_fetched_at"]),
+                },
+                "hourly": [
+                    {"t": _iso(r["hour_start"]), "local_date": r["local_date"].isoformat(),
+                     "local_time": r["local_time"], "om_mm": r["om_mm"], "met_mm": r["met_mm"],
+                     "prob_pct": r["om_prob_pct"], "om_temp_c": r["om_temp_c"],
+                     "met_temp_c": r["met_temp_c"], "diff_mm": r["diff_mm"]}
+                    for r in sorted(hourly, key=lambda r: r["hour_start"]) if r["location"] == name
+                ],
+                "daily": [
+                    {"date": r["local_date"].isoformat(), "hours": r["hours_in_window"],
+                     "open_meteo_mm": r["om_mm"], "met_no_mm": r["met_mm"], "diff_mm": r["diff_mm"]}
+                    for r in daily if r["location"] == name
+                ],
+                "peaks": [
+                    {"t": _iso(r["hour_start"]), "local_date": r["local_date"].isoformat(),
+                     "local_time": r["local_time"], "open_meteo_mm": r["om_mm"], "met_no_mm": r["met_mm"]}
+                    for r in peaks if r["location"] == name
+                ],
+            }
+        )
+    return {
+        "generated_at": _iso(now),
+        "window_hours": load_settings()["window_hours"],
+        "locations": locations,
+    }
+
+
+def main() -> int:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    if not any(SNAPSHOT_DIR.glob("*/*/*.parquet")):
+        print(f"No snapshots found in {SNAPSHOT_DIR}. Run `python -m src.ingest` first.", file=sys.stderr)
+        return 1
+    con = run_sql(now=now)
+    forecast = build_forecast(con, now)
+    BUILD_DIR.mkdir(exist_ok=True)
+    out = BUILD_DIR / "forecast.json"
+    out.write_text(json.dumps(forecast, ensure_ascii=False, indent=1), encoding="utf-8")
+    for loc in forecast["locations"]:
+        t = loc["totals"] or {}
+        print(f"{loc['name']:<14} {len(loc['hourly']):>3} h   open-meteo {t.get('open_meteo_mm')} mm   "
+              f"met-no {t.get('met_no_mm')} mm")
+    print(f"wrote {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

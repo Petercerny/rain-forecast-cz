@@ -1,0 +1,18 @@
+# Non-secret pipeline settings. Secrets and per-deployment values (User-Agent, repo URL)
+# come from environment variables / GitHub repository variables, see .env.example.
+
+# "template" (default, deterministic, used in CI) or "ollama" (local model).
+# Can be overridden with the SUMMARIZER environment variable.
+summarizer: template
+
+ollama:
+  url: http://localhost:11434
+  model: llama3.2:3b
+  timeout_seconds: 120
+
+# Forecast window shown on the site and used for the summaries.
+window_hours: 48
+
+# A source whose newest snapshot is older than this is treated as missing
+# (so a broken API does not silently show old numbers as if they were fresh).
+stale_after_hours: 6

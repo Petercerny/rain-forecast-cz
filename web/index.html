@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rain forecast for Czech cities</title>
+  <meta name="description" content="Next 48 hours of rain for five Czech cities, comparing Open-Meteo and MET Norway.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Rain in the next 48 hours</h1>
+    <p class="sub">Two free forecasts side by side, with a short summary.</p>
+  </header>
+
+  <main>
+    <label class="picker">
+      <span>Location</span>
+      <select id="location" aria-label="Choose a location"></select>
+    </label>
+
+    <section aria-labelledby="summary-h">
+      <h2 id="summary-h" class="sr-only">Summary</h2>
+      <p id="summary" class="summary">Loading…</p>
+      <p id="ai-label" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
+    </section>
+
+    <section aria-labelledby="chart-h">
+      <h2 id="chart-h">Hourly precipitation</h2>
+      <div class="chart-box">
+        <canvas id="chart" role="img" aria-label="Bar chart of hourly precipitation in millimetres from Open-Meteo and MET Norway"></canvas>
+      </div>
+      <p class="note">Times are Europe/Prague. Each bar is the rain in the hour starting at that time.</p>
+    </section>
+
+    <section aria-labelledby="daily-h">
+      <h2 id="daily-h">Expected rain per day</h2>
+      <div class="table-wrap">
+        <table id="daily">
+          <thead><tr><th>Day</th><th>Open-Meteo</th><th>MET Norway</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="note">The first and last days are partial: the window is 48 hours from the last update.</p>
+    </section>
+
+    <p id="status" class="status"></p>
+  </main>
+
+  <footer>
+    <p><strong>Last updated:</strong> <span id="updated">…</span></p>
+    <p>
+      Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>
+      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) and
+      <a href="https://api.met.no/">MET Norway</a>
+      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
+      Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
+    </p>
+    <p>
+      Open-source, non-commercial hobby project:
+      <a href="{{REPO_URL}}">source code and data on GitHub</a>.
+      Forecasts can be wrong, so do not rely on this for safety decisions.
+    </p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+          integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+          crossorigin="anonymous"></script>
+  <script src="app.js"></script>
+</body>
+</html>

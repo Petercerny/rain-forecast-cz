@@ -1,0 +1,19 @@
+# Locations to forecast. Edit freely: add or remove entries, the pipeline picks them up.
+# Coordinates are city centres (GeoNames-based, cross-checked with the Open-Meteo
+# geocoding API), kept to 4 decimals because MET Norway requires <= 4 decimals.
+locations:
+  - name: Karlovy Vary
+    lat: 50.2327
+    lon: 12.8712
+  - name: Plzeň
+    lat: 49.7475
+    lon: 13.3776
+  - name: Praha
+    lat: 50.0880
+    lon: 14.4208
+  - name: Brno
+    lat: 49.1952
+    lon: 16.6080
+  - name: Liberec
+    lat: 50.7671
+    lon: 15.0562

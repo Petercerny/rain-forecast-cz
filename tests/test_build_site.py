@@ -1,0 +1,69 @@
+"""Tests for the map data (periods), city slugs and the files build_site writes."""
+import json
+from datetime import date
+
+from src.build_site import build_data, build_periods, render_site
+from src.common import WEB_DIR, slugify
+
+
+def test_slugify_removes_diacritics_and_spaces():
+    assert slugify("České Budějovice") == "ceske-budejovice"
+    assert slugify("Plzeň") == "plzen"
+    assert slugify("Ústí nad Labem") == "usti-nad-labem"
+    assert slugify("Praha") == "praha"
+
+
+def hour(t, om, met, prob, temp):
+    return {"t": t, "om_mm": om, "met_mm": met, "prob_pct": prob, "om_temp_c": temp, "met_temp_c": temp,
+            "avg_temp_c": temp, "diff_mm": None}
+
+
+def day(d, om, met, prob, tmax):
+    return {"date": d, "hours": 24, "open_meteo_mm": om, "met_no_mm": met, "diff_mm": None,
+            "om_tmin_c": 1.0, "om_tmax_c": tmax, "met_tmin_c": 1.0, "met_tmax_c": tmax,
+            "avg_tmin_c": 1.0, "avg_tmax_c": tmax, "max_prob_pct": prob}
+
+
+LOC = {
+    "name": "České Budějovice", "lat": 48.9744, "lon": 14.4743, "has_data": True,
+    "totals": {"hours": 48},
+    "sources": {"open-meteo": "2026-10-26T08:00:00Z", "met-no": "2026-10-26T08:00:00Z"},
+    "hourly": [hour("2026-10-26T08:00:00Z", 0.2, 0.0, 35, 7.5)],
+    "daily": [day("2026-10-26", 0.2, 0.0, 35, 11.0), day("2026-10-27", 3.0, 4.5, 90, 9.0)],
+    "peaks": [],
+}
+FORECAST = {"generated_at": "2026-10-26T08:30:00Z", "window_hours": 48, "locations": [LOC]}
+SUMMARIES = {"České Budějovice": {"text": "Some text.", "ai_generated": False, "generated_by": "template"}}
+
+
+def test_periods_for_map_markers():
+    p = build_periods(LOC, date(2026, 10, 26))
+    assert p["now"] == {"prob": 35, "temp": 7.5, "rain_mm": 0.2}
+    assert p["d0"] == {"prob": 35, "temp": 11.0, "rain_mm": 0.2}
+    assert p["d1"] == {"prob": 90, "temp": 9.0, "rain_mm": 4.5}   # larger of the two rain totals
+    assert p["d2"] is None                                        # no data for that day
+
+
+def test_data_json_has_slug_periods_and_tab_labels():
+    data = build_data(FORECAST, SUMMARIES, carto_key="abc")
+    loc = data["locations"][0]
+    assert loc["slug"] == "ceske-budejovice"
+    assert loc["periods"]["d1"]["prob"] == 90
+    assert loc["hourly"][0]["temp"] == 7.5
+    assert [p["label"] for p in data["periods"]][:3] == ["Now", "Today", "Tomorrow"]
+    assert data["map"]["carto_key"] == "abc"
+    assert data["generated_at_local"].endswith("CET")  # 26 Oct 2026 is after the clocks went back
+
+
+def test_render_site_writes_map_page_city_pages_and_data(tmp_path):
+    data = build_data(FORECAST, SUMMARIES)
+    render_site(data, "https://github.com/example/repo", web_dir=WEB_DIR, site_dir=tmp_path / "site")
+    site = tmp_path / "site"
+
+    assert (site / "index.html").exists() and (site / "map.js").exists()
+    assert not (site / "city.html").exists()                       # the template is not published
+    page = (site / "ceske-budejovice" / "index.html").read_text(encoding="utf-8")
+    assert "České Budějovice" in page and "{{" not in page         # all placeholders filled in
+    assert "https://github.com/example/repo" in page
+    assert "{{" not in (site / "index.html").read_text(encoding="utf-8")
+    assert json.loads((site / "data.json").read_text(encoding="utf-8"))["locations"][0]["name"] == "České Budějovice"

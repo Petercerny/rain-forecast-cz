@@ -85,6 +85,9 @@ SELECT
     -- Difference between the sources. Positive = Open-Meteo expects MORE rain.
     -- NULL when one of the sources is missing for that hour.
     round(om_mm - met_mm, 2) AS diff_mm,
+    -- One temperature for the map: the average of both sources. If only one source has
+    -- the hour, use that one (a + b is NULL when either is NULL, so coalesce falls through).
+    coalesce(round((om_temp_c + met_temp_c) / 2, 1), om_temp_c, met_temp_c) AS avg_temp_c,
     -- The Prague-local calendar day and clock hour, for "today / tomorrow" style output.
     CAST(hour_start AT TIME ZONE 'Europe/Prague' AS DATE)          AS local_date,
     strftime(hour_start AT TIME ZONE 'Europe/Prague', '%H:%M')     AS local_time
@@ -100,6 +103,8 @@ WHERE hour_start >= date_trunc('hour', getvariable('now_utc'))
 --    The window is 48 hours from "now", so it usually touches 3 calendar days and the
 --    first and last are partial: hours_in_window says how many hours each total covers.
 --    sum() skips NULLs, so a day with no data from a source shows NULL, not 0.
+--    Also per day: lowest / highest temperature of each source, the highest rain chance,
+--    and the highest / lowest of the two-source average (used by the map markers).
 -- -------------------------------------------------------------------------------------
 CREATE OR REPLACE TEMP TABLE daily AS
 SELECT
@@ -108,7 +113,14 @@ SELECT
     count(*)                        AS hours_in_window,
     round(sum(om_mm), 1)            AS om_mm,
     round(sum(met_mm), 1)           AS met_mm,
-    round(sum(om_mm) - sum(met_mm), 1) AS diff_mm   -- positive = Open-Meteo wetter
+    round(sum(om_mm) - sum(met_mm), 1) AS diff_mm,   -- positive = Open-Meteo wetter
+    min(om_temp_c)                  AS om_tmin_c,
+    max(om_temp_c)                  AS om_tmax_c,
+    min(met_temp_c)                 AS met_tmin_c,
+    max(met_temp_c)                 AS met_tmax_c,
+    min(avg_temp_c)                 AS avg_tmin_c,
+    max(avg_temp_c)                 AS avg_tmax_c,
+    max(om_prob_pct)                AS max_prob_pct
 FROM hourly
 GROUP BY location, local_date
 ORDER BY location, local_date;
@@ -139,7 +151,8 @@ ORDER BY location, rank;
 -- -------------------------------------------------------------------------------------
 -- 5. location_totals
 --    One row per location: totals over the whole window, the highest rain probability,
---    and when each source was last fetched (NULL = no usable data from that source).
+--    the temperature range (of the two-source average), and when each source was last
+--    fetched (NULL = no usable data from that source).
 -- -------------------------------------------------------------------------------------
 CREATE OR REPLACE TEMP TABLE location_totals AS
 SELECT
@@ -149,6 +162,8 @@ SELECT
     round(sum(h.met_mm), 1)               AS met_total_mm,
     round(sum(h.om_mm) - sum(h.met_mm), 1) AS diff_total_mm,
     max(h.om_prob_pct)                    AS max_prob_pct,
+    min(h.avg_temp_c)                     AS temp_min_c,
+    max(h.avg_temp_c)                     AS temp_max_c,
     (SELECT max(fetched_at) FROM latest_snapshot s
       WHERE s.location = h.location AND s.source = 'open-meteo') AS om_fetched_at,
     (SELECT max(fetched_at) FROM latest_snapshot s

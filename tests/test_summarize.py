@@ -6,7 +6,8 @@ from src import summarize as sm
 LOC = {
     "name": "Praha",
     "has_data": True,
-    "totals": {"hours": 48, "open_meteo_mm": 3.2, "met_no_mm": 2.0, "diff_mm": 1.2, "max_prob_pct": 70},
+    "totals": {"hours": 48, "open_meteo_mm": 3.2, "met_no_mm": 2.0, "diff_mm": 1.2, "max_prob_pct": 70,
+               "temp_min_c": -2.5, "temp_max_c": 9.0},
     "daily": [
         {"date": "2026-10-26", "hours": 24, "open_meteo_mm": 2.0, "met_no_mm": 1.5, "diff_mm": 0.5},
         {"date": "2026-10-27", "hours": 24, "open_meteo_mm": 1.2, "met_no_mm": 0.5, "diff_mm": 0.7},
@@ -44,6 +45,30 @@ def test_clock_time_must_match_exactly(facts):
 
 def test_text_without_numbers_passes(facts):
     assert sm.check_faithfulness("It will be a wet day.", facts) == []
+
+
+# ---- temperature
+
+def test_facts_contain_temperature_range(facts):
+    assert facts["temperature_c"] == {"min": -2.5, "max": 9.0}
+
+
+def test_template_mentions_temperature_and_stays_faithful(facts):
+    text = sm.template_summary(facts)
+    assert "Temperatures range from -2.5 to 9.0" in text
+    assert sm.check_faithfulness(text, facts) == []  # the minus sign does not trip the number check
+
+
+def test_invented_temperature_is_reported(facts):
+    assert sm.check_faithfulness("It will reach 25.0 °C.", facts) == [25.0]
+
+
+def test_missing_temperature_is_left_out():
+    from datetime import date
+    no_temp = {**LOC, "totals": {**LOC["totals"], "temp_min_c": None, "temp_max_c": None}}
+    facts = sm.build_facts(no_temp, date(2026, 10, 26))
+    assert facts["temperature_c"] is None
+    assert "Temperatures" not in sm.template_summary(facts)
 
 
 # ---- template summarizer

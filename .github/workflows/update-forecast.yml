@@ -21,6 +21,8 @@ jobs:
       USER_AGENT: ${{ vars.USER_AGENT }}
       REPO_URL: ${{ vars.REPO_URL || format('{0}/{1}', github.server_url, github.repository) }}
       SUMMARIZER: template  # CI never uses the local LLM
+      # Free CARTO basemap key for the map tiles (optional: without it the map uses OpenStreetMap tiles).
+      CARTO_KEY: ${{ vars.CARTO_KEY }}
     steps:
       - uses: actions/checkout@v5
 

@@ -11,12 +11,16 @@ NOW = datetime(2026, 7, 1, 10, 30, tzinfo=timezone.utc)  # summer: Prague = UTC+
 H0 = datetime(2026, 7, 1, 10, tzinfo=timezone.utc)       # start of the current hour = window start
 
 
-def write(tmp_path, source, fetched_at, location, hours):
-    """hours = {hour offset from H0: precip_mm}. Writes one snapshot file."""
+def write(tmp_path, source, fetched_at, location, hours, temps=None, probs=None):
+    """hours = {hour offset from H0: precip_mm}. Writes one snapshot file.
+
+    temps / probs = optional {hour offset: value}; temperature defaults to 10.0, probability to NULL.
+    """
+    temps, probs = temps or {}, probs or {}
     rows = [
         {"fetched_at": fetched_at, "location": location, "lat": 50.0, "lon": 14.0,
          "valid_time": H0 + timedelta(hours=h), "hour_start": H0 + timedelta(hours=h),
-         "precip_mm": mm, "precip_prob": None, "temp_c": 10.0, "source_updated_at": None}
+         "precip_mm": mm, "precip_prob": probs.get(h), "temp_c": temps.get(h, 10.0), "source_updated_at": None}
         for h, mm in hours.items()
     ]
     folder = tmp_path / f"source={source}" / f"date={fetched_at:%Y-%m-%d}"
@@ -70,3 +74,23 @@ def test_peak_hours_top_three_by_wettest_source(tmp_path):
     con = run_sql(tmp_path, NOW)
     peaks = query(con, "SELECT rank, peak_mm FROM peak_hours ORDER BY rank")
     assert peaks == [(1, 4.0), (2, 3.0), (3, 1.0)]  # dry hours and the 4th place are left out
+
+
+def test_average_temperature_uses_both_sources_or_falls_back_to_one(tmp_path):
+    fetched = NOW - timedelta(hours=1)
+    write(tmp_path, "open-meteo", fetched, "Praha", {0: 0.0, 1: 0.0, 2: 0.0}, temps={0: 10.0, 1: 12.0, 2: 14.0})
+    write(tmp_path, "met-no", fetched, "Praha", {0: 0.0, 1: 0.0}, temps={0: 8.0, 1: 11.0})  # no hour 2
+    con = run_sql(tmp_path, NOW)
+    rows = query(con, "SELECT avg_temp_c FROM hourly ORDER BY hour_start")
+    assert rows == [(9.0,), (11.5,), (14.0,)]  # average, average, Open-Meteo alone
+
+
+def test_daily_temperature_range_and_highest_rain_chance(tmp_path):
+    fetched = NOW - timedelta(hours=1)
+    write(tmp_path, "open-meteo", fetched, "Praha", {0: 0.0, 1: 0.0, 2: 0.0},
+          temps={0: 10.0, 1: 15.0, 2: 12.0}, probs={0: 20, 1: 70, 2: 40})
+    write(tmp_path, "met-no", fetched, "Praha", {0: 0.0, 1: 0.0, 2: 0.0}, temps={0: 9.0, 1: 13.0, 2: 11.0})
+    con = run_sql(tmp_path, NOW)
+    row = query(con, "SELECT om_tmin_c, om_tmax_c, met_tmin_c, met_tmax_c, avg_tmax_c, max_prob_pct FROM daily")
+    assert row == [(10.0, 15.0, 9.0, 13.0, 14.0, 70)]
+    assert query(con, "SELECT temp_min_c, temp_max_c FROM location_totals") == [(9.5, 14.0)]

@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -186,6 +187,7 @@ def run(sources=SOURCES, only_location: str | None = None) -> dict:
                     if payload is None:
                         continue
                     parsed, updated = parse_met_no(payload), met_updated_at(payload)
+                    time.sleep(0.3)  # MET asks clients to spread requests out
                 rows += to_table(parsed, loc, fetched_at, updated)
                 log.info("%s %s: %d hourly rows", source, loc["name"], len(parsed))
             except Exception as exc:  # noqa: BLE001 - deliberately broad, see comment above

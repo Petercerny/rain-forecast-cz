@@ -1,14 +1,14 @@
 # rain-forecast-cz
 
-**A small, fully static website that shows the next 48 hours of rain for five Czech cities, putting two free forecasts (Open-Meteo and MET Norway) side by side with a short plain-language summary.** An hourly GitHub Actions job fetches both APIs, stores every forecast it ever saw as Parquet, builds the numbers with DuckDB SQL, writes the summaries, and publishes plain HTML to GitHub Pages. There is no server and no per-visitor computation.
+**A small, fully static website with a map of Czechia that shows the rain chance and temperature for the 13 regional capitals over the next 48 hours, putting two free forecasts (Open-Meteo and MET Norway) side by side. Tap a city for a quick view with a short plain-language summary, or open its full page.** An hourly GitHub Actions job fetches both APIs, stores every forecast it ever saw as Parquet, builds the numbers with DuckDB SQL, writes the summaries, and publishes plain HTML to GitHub Pages. There is no server and no per-visitor computation.
 
 It is phase 1 of a personal learning project (Python, SQL, later PySpark). The long-term idea is to keep the forecast history and eventually check which source was right.
 
 **Live site:** `https://<your-user>.github.io/<your-repo>/` (see [Deploy your own](#deploy-your-own))
 
-| Desktop | Phone |
-| --- | --- |
-| ![Desktop screenshot](docs/screenshot.png) | ![Phone screenshot](docs/screenshot-mobile.png) |
+| Map | Quick view | City page | Phone |
+| --- | --- | --- | --- |
+| ![Map](docs/screenshot-map.png) | ![Quick view](docs/screenshot-modal.png) | ![City page](docs/screenshot-city.png) | ![Phone](docs/screenshot-mobile.png) |
 
 > The screenshots come from a local build. Replace them with ones from the live site once it is deployed.
 
@@ -23,7 +23,7 @@ flowchart LR
     T --> F[build/forecast.json]
     F --> M["summarize.py<br/>template or Ollama<br/>+ faithfulness check"]
     M --> W["build_site.py<br/>site/data.json + HTML"]
-    W --> P[GitHub Pages]
+    W --> P["GitHub Pages<br/>map page + one page per city"]
 ```
 
 | Step | File | What it does |
@@ -31,7 +31,7 @@ flowchart LR
 | 1 | `src/ingest.py` (+ `src/parsers.py`) | Calls both APIs for every location in `config/locations.yaml`, parses them to hourly rows, writes a **new** Parquet file per source per run. One failing source or city never stops the run. |
 | 2 | `src/transform.py` + `sql/forecast_summary.sql` | DuckDB picks the newest snapshot per source and city, joins the two sources hour by hour, and computes the 48-hour window, daily totals, wettest hours and the difference between sources. |
 | 3 | `src/summarize.py` | Writes 2 to 3 sentences per city from the computed facts only. `template` (default) or `ollama` (local LLM). |
-| 4 | `src/build_site.py` + `web/` | Writes `site/data.json` and copies the static page (vanilla JS + Chart.js from a CDN). |
+| 4 | `src/build_site.py` + `web/` | Writes `site/data.json`, the map page (`index.html`) and one page per city (`site/<city>/index.html`, rendered from `web/city.html`). Vanilla JS, [Leaflet](https://leafletjs.com/) for the map and Chart.js for the charts, both from a CDN. |
 
 Snapshot layout, ready for a later job to join against observations:
 
@@ -45,7 +45,7 @@ Each row is one forecast hour as predicted at `fetched_at`: `location, lat, lon,
 
 ## Tech stack
 
-Python 3.11+, [DuckDB](https://duckdb.org/) (SQL), PyArrow (Parquet), requests, PyYAML, pytest, [Chart.js](https://www.chartjs.org/) (CDN, pinned version with SRI hash), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
+Python 3.11+, [DuckDB](https://duckdb.org/) (SQL), PyArrow (Parquet), requests, PyYAML, pytest, [Leaflet](https://leafletjs.com/) + [CARTO](https://carto.com/basemaps/) map tiles, [Chart.js](https://www.chartjs.org/) (CDNs, pinned versions with SRI hashes), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
 
 ## Run it locally
 
@@ -96,6 +96,7 @@ The model name and URL live under `ollama:` in `config/settings.yaml`. The model
 2. **Settings → Pages → Source: GitHub Actions.**
 3. **Settings → Secrets and variables → Actions → Variables**, add:
    - `USER_AGENT` = `rain-forecast-cz/0.1 https://github.com/<you>/<repo>`
+   - `CARTO_KEY` = your free CARTO basemaps key (request one at <https://carto.com/basemaps/apikey/>: just an email, no account). It is visible in the page source like any map key, so restrict it to your `<user>.github.io` domain in CARTO. Without it the map falls back to OpenStreetMap tiles.
    - `REPO_URL` (optional; defaults to the repository's own URL)
 4. **Actions → Update forecast → Run workflow** once. After that it runs hourly at minute 23.
 
@@ -103,7 +104,7 @@ The workflow (`.github/workflows/update-forecast.yml`) runs ingest, transform, s
 
 ### Where the data is stored (and the tradeoff)
 
-Snapshots are committed to a separate `data` branch, never to `main`. That is free and needs no database, and anyone can clone the branch and query the history with DuckDB. The tradeoff: git is not built for ever-growing binary data. Every run adds a few small files (about 10 KB for 5 cities and 2 sources, so roughly 100 MB per year), and git history keeps all of it forever, so clones get slower over time.
+Snapshots are committed to a separate `data` branch, never to `main`. That is free and needs no database, and anyone can clone the branch and query the history with DuckDB. The tradeoff: git is not built for ever-growing binary data. Every run adds a few small files (about 25 KB for 13 cities and 2 sources, so roughly 200 MB per year), and git history keeps all of it forever, so clones get slower over time.
 
 When the branch grows large, compact it:
 
@@ -120,7 +121,8 @@ In a public repository GitHub **automatically disables scheduled workflows when 
 - Code: MIT, see [`LICENSE`](LICENSE).
 - Data: Open-Meteo and MET Norway, both CC BY 4.0, see [`DATA_LICENSES.md`](DATA_LICENSES.md). The attribution is shown in the site footer and travels with the snapshots on the `data` branch.
 - **This is a non-commercial project.** The site has no ads, no tracking and no monetization, because Open-Meteo's free tier is for non-commercial use only. Please keep it that way if you fork it (or switch to a paid plan).
-- Request volume is tiny: a few calls per hour, far below Open-Meteo's free limits. For MET Norway the pipeline truncates coordinates to 4 decimals, sends the `User-Agent` from `USER_AGENT`, does not call again before the `Expires` time, and sends `If-Modified-Since`.
+- Map tiles come from CARTO (with an API key, free for non-commercial use up to 5 million requests a month) or OpenStreetMap as the fallback. The map shows the required attribution. Visitors' browsers request tiles from those servers directly, so those servers see their IP addresses.
+- Request volume is tiny: about 13 calls per hour to each weather API, far below Open-Meteo's free limits. For MET Norway the pipeline truncates coordinates to 4 decimals, sends the `User-Agent` from `USER_AGENT`, does not call again before the `Expires` time, and sends `If-Modified-Since`.
 
 ## What I learned / what's next
 

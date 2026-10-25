@@ -64,6 +64,11 @@ def build_facts(loc: dict, today: date) -> dict:
              **{SRC_NAMES[k]: d[f"{k}_mm"] for k in available}}
             for d in loc["daily"]
         ],
+        # Temperature range over the window (average of the two sources), in deg C.
+        "temperature_c": (
+            {"min": totals["temp_min_c"], "max": totals["temp_max_c"]}
+            if totals.get("temp_min_c") is not None else None
+        ),
         "peak": None,
         "max_rain_probability_pct": totals.get("max_prob_pct"),
     }
@@ -102,7 +107,12 @@ def template_summary(facts: dict) -> str:
         (src1, mm1), *rest = totals.items()
         first = f"Over the next {hours} hours {src1} expects {mm1} mm of rain in {name}"
         if rest:
-            first += f" and {rest[0][0]} {rest[0][1]} mm."
+            first += f" and {rest[0][0]} {rest[0][1]} mm"
+            # Do the two sources agree?
+            if facts["wetter_source"] == "equal":
+                first += f" (they agree to within {DRY_THRESHOLD_MM} mm)."
+            else:
+                first += f" (a difference of {facts['difference_mm']} mm, {facts['wetter_source']} being wetter)."
         else:
             first += f" (only {src1} data is available right now)."
 
@@ -114,15 +124,10 @@ def template_summary(facts: dict) -> str:
         amounts = ", ".join(f"{k} {v} mm" for k, v in peak.items() if k not in ("day", "time"))
         sentences.append(f"The wettest hour is {peak['day']} at {peak['time']} ({amounts}).")
 
-    # Sentence 3: do the two sources agree?
-    if "difference_mm" in facts:
-        if facts["wetter_source"] == "equal":
-            sentences.append(f"The two sources agree to within {DRY_THRESHOLD_MM} mm.")
-        else:
-            sentences.append(
-                f"The two sources differ by {facts['difference_mm']} mm, with "
-                f"{facts['wetter_source']} expecting more rain."
-            )
+    # Sentence 3: temperature range.
+    temp = facts.get("temperature_c")
+    if temp:
+        sentences.append(f"Temperatures range from {temp['min']} to {temp['max']} °C.")
     return " ".join(sentences)
 
 
@@ -156,7 +161,7 @@ OLLAMA_PROMPT = """You write a short weather note for a website, from the JSON f
 
 Rules:
 - Write 2 or 3 plain English sentences.
-- Describe only what the facts show. Do not explain causes, do not speculate, do not give advice.
+- Describe only what the facts show: rain, then temperature (in degrees Celsius). Do not explain causes, do not speculate, do not give advice.
 - Use only numbers that appear in the facts. Do not calculate new numbers. Amounts are in mm.
 - Name the sources (Open-Meteo, MET Norway) when you compare them.
 - Output only the note, with no heading and no quotation marks.

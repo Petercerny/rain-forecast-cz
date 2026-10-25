@@ -8,6 +8,11 @@
   --link: #1a5fb4;
   --om: #2a6fdb;   /* Open-Meteo */
   --met: #e0861a;  /* MET Norway */
+  --lvl-0: #b45309;  /* dry: warm */
+  --lvl-1: #5b6672;  /* cloud: grey */
+  --lvl-2: #1a6fd1;  /* light rain: blue */
+  --lvl-3: #0b3d91;  /* rain: deep blue */
+  --mk-bg: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -19,6 +24,11 @@
     --link: #7db3f5;
     --om: #5b9bff;
     --met: #f0a040;
+    --lvl-0: #f2b24c;
+    --lvl-1: #a9b6c3;
+    --lvl-2: #6aaeff;
+    --lvl-3: #9cc4ff;
+    --mk-bg: #1a2129;
   }
 }
 
@@ -86,4 +96,109 @@ footer p { margin: 8px 0; }
 
 @media (min-width: 600px) {
   .chart-box { height: 360px; }
+}
+
+
+/* ---------- map page ---------- */
+.tabs { display: flex; gap: 6px; margin: 16px 0 12px; overflow-x: auto; }
+.tabs button {
+  flex: 1 0 auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--link); border-color: var(--link); color: var(--bg); font-weight: 600; }
+
+.map-box { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#map { height: 65vh; min-height: 420px; background: var(--card); }
+.leaflet-container { font: inherit; }
+/* OpenStreetMap fallback tiles: tone down, and darken in dark mode */
+.osm-tiles { filter: grayscale(0.55) brightness(1.03); }
+@media (prefers-color-scheme: dark) {
+  .osm-tiles { filter: invert(1) hue-rotate(180deg) grayscale(0.6) brightness(0.85); }
+}
+
+/* markers: icon + rain chance + temperature, drawn by map.js */
+.mk-wrap { background: none; border: 0; }
+.mk {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 5px;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--mk-bg);
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  line-height: 1.1;
+}
+.mk svg { width: 20px; height: 20px; flex: none; }
+.mk-val { display: flex; flex-direction: column; font-size: 0.75rem; color: var(--text); }
+.mk-val b { font-size: 0.8125rem; }
+.mk-name { display: none; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px;
+  font-size: 0.6875rem; font-weight: 600; color: var(--text); text-shadow: 0 0 3px var(--mk-bg), 0 0 3px var(--mk-bg), 0 0 3px var(--mk-bg); }
+.leaflet-marker-icon:focus-visible .mk, .mk:hover { outline: 3px solid var(--link); outline-offset: 1px; }
+@media (min-width: 600px) { .mk-name { display: block; } }
+.lvl-0 { color: var(--lvl-0); } .lvl-1 { color: var(--lvl-1); } .lvl-2 { color: var(--lvl-2); } .lvl-3 { color: var(--lvl-3); }
+.lvl--1 { color: var(--muted); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; padding: 0; margin: 10px 0 0; font-size: 0.8125rem; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.legend .lg svg { width: 18px; height: 18px; display: block; }
+
+.place-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr; gap: 6px; }
+@media (min-width: 600px) { .place-list { grid-template-columns: 1fr 1fr; } }
+.place {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px;
+  font: inherit; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+}
+.place svg { width: 22px; height: 22px; flex: none; }
+.place-name { flex: 1; color: var(--text); }
+.place-val { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ---------- modal ---------- */
+dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.modal-body { padding: 16px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.modal-head h2 { margin: 0; font-size: 1.25rem; }
+.icon-btn { width: 44px; height: 44px; font-size: 1.75rem; line-height: 1; color: var(--text); background: none; border: 0; cursor: pointer; }
+.modal-stats { margin: 4px 0 8px; font-weight: 600; }
+.modal .summary, dialog .summary { margin-top: 8px; }
+.chart-box.compact { height: 240px; margin-top: 12px; }
+.btn {
+  display: block; margin-top: 16px; padding: 12px 16px; text-align: center; text-decoration: none; font-weight: 600;
+  color: var(--bg); background: var(--link); border-radius: 8px; min-height: 44px;
+}
+
+/* ---------- city page ---------- */
+.back { display: inline-block; padding: 8px 0; font-size: 0.9375rem; }
+.now-stats { margin: 12px 0 0; font-weight: 600; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.dot.om { background: var(--om); }
+.dot.met { background: var(--met); }
+td > div { white-space: nowrap; }
+
+/* smaller markers on a phone, so neighbouring cities overlap less */
+@media (max-width: 599px) {
+  .mk { gap: 3px; padding: 2px 6px 2px 4px; border-width: 1.5px; }
+  .mk svg { width: 15px; height: 15px; }
+  .mk-val { font-size: 0.625rem; }
+  .mk-val b { font-size: 0.6875rem; }
 }

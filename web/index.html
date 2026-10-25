@@ -4,48 +4,53 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rain forecast for Czech cities</title>
-  <meta name="description" content="Next 48 hours of rain for five Czech cities, comparing Open-Meteo and MET Norway.">
+  <meta name="description" content="Rain chance and temperature on a map of Czechia for the next 48 hours, comparing Open-Meteo and MET Norway.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-root="">
   <header>
-    <h1>Rain in the next 48 hours</h1>
-    <p class="sub">Two free forecasts side by side, with a short summary.</p>
+    <h1>Rain and temperature in Czechia</h1>
+    <p class="sub">Next 48 hours, two free forecasts compared. Pick a day, then tap a place.</p>
   </header>
 
   <main>
-    <label class="picker">
-      <span>Location</span>
-      <select id="location" aria-label="Choose a location"></select>
-    </label>
+    <div id="tabs" class="tabs" role="tablist" aria-label="Time period"></div>
 
-    <section aria-labelledby="summary-h">
-      <h2 id="summary-h" class="sr-only">Summary</h2>
-      <p id="summary" class="summary">Loading…</p>
-      <p id="ai-label" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
-    </section>
+    <div class="map-box">
+      <div id="map" aria-label="Map of Czechia with rain chance and temperature per city"></div>
+    </div>
 
-    <section aria-labelledby="chart-h">
-      <h2 id="chart-h">Hourly precipitation</h2>
-      <div class="chart-box">
-        <canvas id="chart" role="img" aria-label="Bar chart of hourly precipitation in millimetres from Open-Meteo and MET Norway"></canvas>
-      </div>
-      <p class="note">Times are Europe/Prague. Each bar is the rain in the hour starting at that time.</p>
-    </section>
+    <ul class="legend" aria-label="Legend">
+      <li><span class="lg lvl-0" data-icon="0"></span> under 20% rain chance</li>
+      <li><span class="lg lvl-1" data-icon="1"></span> 20-49%</li>
+      <li><span class="lg lvl-2" data-icon="2"></span> 50-79%</li>
+      <li><span class="lg lvl-3" data-icon="3"></span> 80% or more</li>
+    </ul>
+    <p class="note">Rain chance is from Open-Meteo. The number next to it is the temperature (average of both sources; the highest of the day on day tabs).</p>
 
-    <section aria-labelledby="daily-h">
-      <h2 id="daily-h">Expected rain per day</h2>
-      <div class="table-wrap">
-        <table id="daily">
-          <thead><tr><th>Day</th><th>Open-Meteo</th><th>MET Norway</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="note">The first and last days are partial: the window is 48 hours from the last update.</p>
+    <section aria-labelledby="list-h">
+      <h2 id="list-h">All places</h2>
+      <ul id="place-list" class="place-list"></ul>
     </section>
 
     <p id="status" class="status"></p>
   </main>
+
+  <dialog id="modal" aria-labelledby="modal-title">
+    <div class="modal-body">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button type="button" id="modal-close" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <p id="modal-stats" class="modal-stats"></p>
+      <p id="modal-summary" class="summary"></p>
+      <p id="modal-ai" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
+      <div class="chart-box compact"><canvas id="modal-chart" role="img" aria-label="Hourly rain and temperature chart"></canvas></div>
+      <a id="modal-link" class="btn" href="#">Full details &rarr;</a>
+    </div>
+  </dialog>
 
   <footer>
     <p><strong>Last updated:</strong> <span id="updated">…</span></p>
@@ -57,15 +62,23 @@
       Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
     </p>
     <p>
+      Map: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>,
+      &copy; <a href="https://carto.com/attributions">CARTO</a>, rendered with <a href="https://leafletjs.com/">Leaflet</a>.
+      The map tiles are loaded from a third-party server, which sees your IP address.
+    </p>
+    <p>
       Open-source, non-commercial hobby project:
       <a href="{{REPO_URL}}">source code and data on GitHub</a>.
       Forecasts can be wrong, so do not rely on this for safety decisions.
     </p>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
           integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
           crossorigin="anonymous"></script>
-  <script src="app.js"></script>
+  <script src="common.js"></script>
+  <script src="map.js"></script>
 </body>
 </html>

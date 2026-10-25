@@ -62,6 +62,8 @@ def build_forecast(con, now: datetime) -> dict:
                     "met_no_mm": t["met_total_mm"],
                     "diff_mm": t["diff_total_mm"],
                     "max_prob_pct": t["max_prob_pct"],
+                    "temp_min_c": t["temp_min_c"],
+                    "temp_max_c": t["temp_max_c"],
                 },
                 "sources": {  # when each source was last fetched; null = no usable data
                     "open-meteo": None if t is None else _iso(t["om_fetched_at"]),
@@ -71,12 +73,17 @@ def build_forecast(con, now: datetime) -> dict:
                     {"t": _iso(r["hour_start"]), "local_date": r["local_date"].isoformat(),
                      "local_time": r["local_time"], "om_mm": r["om_mm"], "met_mm": r["met_mm"],
                      "prob_pct": r["om_prob_pct"], "om_temp_c": r["om_temp_c"],
-                     "met_temp_c": r["met_temp_c"], "diff_mm": r["diff_mm"]}
+                     "met_temp_c": r["met_temp_c"], "avg_temp_c": r["avg_temp_c"],
+                     "diff_mm": r["diff_mm"]}
                     for r in sorted(hourly, key=lambda r: r["hour_start"]) if r["location"] == name
                 ],
                 "daily": [
                     {"date": r["local_date"].isoformat(), "hours": r["hours_in_window"],
-                     "open_meteo_mm": r["om_mm"], "met_no_mm": r["met_mm"], "diff_mm": r["diff_mm"]}
+                     "open_meteo_mm": r["om_mm"], "met_no_mm": r["met_mm"], "diff_mm": r["diff_mm"],
+                     "om_tmin_c": r["om_tmin_c"], "om_tmax_c": r["om_tmax_c"],
+                     "met_tmin_c": r["met_tmin_c"], "met_tmax_c": r["met_tmax_c"],
+                     "avg_tmin_c": r["avg_tmin_c"], "avg_tmax_c": r["avg_tmax_c"],
+                     "max_prob_pct": r["max_prob_pct"]}
                     for r in daily if r["location"] == name
                 ],
                 "peaks": [

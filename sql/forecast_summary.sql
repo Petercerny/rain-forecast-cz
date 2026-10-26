@@ -9,13 +9,14 @@
 --   rain.window_hours       length of the forecast window, normally 48
 --   rain.stale_after_hours  ignore a source whose newest fetch is older than this
 --
--- The script builds five TEMP tables, in this order. Each step reads the one before:
+-- The script builds six TEMP tables, in this order. Each step reads the one before:
 --
 --   latest_snapshot   newest forecast per (source, location)          <- start reading here
 --   hourly            one row per location and hour, both sources side by side
 --   daily             totals per location and (Prague) calendar day
 --   peak_hours        the wettest hours per location
 --   location_totals   one row per location: window totals + data freshness
+--   sun_times         sunrise and sunset per location and day (Open-Meteo)
 --
 -- Vocabulary:  om  = Open-Meteo,  met = MET Norway,  mm = millimetres of precipitation
 --
@@ -32,7 +33,7 @@
 SET TIME ZONE 'UTC';
 
 -- Re-running the script in the same session must start clean.
-DROP TABLE IF EXISTS latest_snapshot, hourly, daily, peak_hours, location_totals;
+DROP TABLE IF EXISTS latest_snapshot, hourly, daily, peak_hours, location_totals, sun_times;
 
 
 -- -------------------------------------------------------------------------------------
@@ -62,7 +63,14 @@ SELECT
     h.hour_start,
     h.precip_mm::numeric   AS precip_mm,
     h.precip_prob,
-    h.temp_c::numeric      AS temp_c
+    h.temp_c::numeric      AS temp_c,
+    -- Sky, light and wind: Open-Meteo only (NULL for MET Norway and for fetches from before
+    -- these were collected). Wind is cast to numeric so it rounds like the other decimals.
+    h.cloud_pct, h.cloud_low_pct, h.cloud_mid_pct, h.cloud_high_pct,
+    h.is_day, h.sunshine_s, h.weather_code, h.visibility_m, h.humidity_pct,
+    h.wind_ms::numeric     AS wind_ms,
+    h.gust_ms::numeric     AS gust_ms,
+    h.wind_dir_deg
 FROM newest AS n
 JOIN rain.locations      AS l ON l.slug = n.location_slug
 JOIN rain.forecast_hours AS h USING (fetch_id);
@@ -79,7 +87,10 @@ JOIN rain.forecast_hours AS h USING (fetch_id);
 -- -------------------------------------------------------------------------------------
 CREATE TEMP TABLE hourly AS
 WITH om AS (
-    SELECT location, hour_start, precip_mm, precip_prob, temp_c
+    SELECT location, hour_start, precip_mm, precip_prob, temp_c,
+           cloud_pct, cloud_low_pct, cloud_mid_pct, cloud_high_pct,
+           is_day, sunshine_s, weather_code, visibility_m, humidity_pct,
+           wind_ms, gust_ms, wind_dir_deg
     FROM latest_snapshot WHERE source = 'open-meteo'
 ),
 met AS (
@@ -94,7 +105,21 @@ joined AS (
         met.precip_mm  AS met_mm,
         om.precip_prob AS om_prob_pct,          -- chance of rain, Open-Meteo only
         om.temp_c      AS om_temp_c,
-        met.temp_c     AS met_temp_c
+        met.temp_c     AS met_temp_c,
+        -- Open-Meteo only: cloud cover (total and per layer, %), 1 = daylight, seconds of sun in
+        -- the hour, WMO weather code, visibility (m), humidity (%), wind and gusts (m/s), wind direction.
+        om.cloud_pct      AS om_cloud_pct,
+        om.cloud_low_pct  AS om_cloud_low_pct,
+        om.cloud_mid_pct  AS om_cloud_mid_pct,
+        om.cloud_high_pct AS om_cloud_high_pct,
+        om.is_day         AS om_is_day,
+        om.sunshine_s     AS om_sunshine_s,
+        om.weather_code   AS om_weather_code,
+        om.visibility_m   AS om_visibility_m,
+        om.humidity_pct   AS om_humidity_pct,
+        om.wind_ms        AS om_wind_ms,
+        om.gust_ms        AS om_gust_ms,
+        om.wind_dir_deg   AS om_wind_dir_deg
     FROM om
     FULL OUTER JOIN met
         ON om.location = met.location AND om.hour_start = met.hour_start
@@ -126,6 +151,12 @@ WHERE hour_start >= date_trunc('hour', current_setting('rain.now_utc')::timestam
 --    sum() skips NULLs, so a day with no data from a source shows NULL, not 0.
 --    Also per day: lowest / highest temperature of each source, the highest rain chance,
 --    and the highest / lowest of the two-source average (used by the map markers).
+--    From Open-Meteo: average cloud cover, hours of sunshine, strongest wind and gust,
+--    average humidity, poorest visibility and the worst weather of the day.
+--
+--    "Worst weather" = the highest WMO weather code of the day. That is a simple rule that works
+--    because the codes grow roughly with how unpleasant they are: 0-3 clear to overcast, 45/48 fog,
+--    51-57 drizzle, 61-67 rain, 71-77 snow, 80-86 showers, 95-99 thunderstorm.
 -- -------------------------------------------------------------------------------------
 CREATE TEMP TABLE daily AS
 SELECT
@@ -141,7 +172,14 @@ SELECT
     max(met_temp_c)                    AS met_tmax_c,
     min(avg_temp_c)                    AS avg_tmin_c,
     max(avg_temp_c)                    AS avg_tmax_c,
-    max(om_prob_pct)                   AS max_prob_pct
+    max(om_prob_pct)                   AS max_prob_pct,
+    round(avg(om_cloud_pct))           AS cloud_avg_pct,
+    round(sum(om_sunshine_s) / 3600.0, 1) AS sunshine_h,
+    max(om_wind_ms)                    AS wind_max_ms,
+    max(om_gust_ms)                    AS gust_max_ms,
+    round(avg(om_humidity_pct))        AS humidity_avg_pct,
+    min(om_visibility_m)               AS visibility_min_m,
+    max(om_weather_code)               AS worst_weather_code
 FROM hourly
 GROUP BY location, local_date
 ORDER BY location, local_date;
@@ -200,3 +238,32 @@ SELECT
 FROM hourly AS h
 GROUP BY h.location
 ORDER BY h.location;
+
+
+-- -------------------------------------------------------------------------------------
+-- 6. sun_times
+--    Sunrise and sunset per location and Prague calendar day, from the newest Open-Meteo fetch.
+--    A fetch stores them as two small arrays (one element per UTC day); unnest() with several
+--    arrays walks them side by side, so each output row is one day's sunrise AND sunset.
+--    Fetches from before this was collected have NULL arrays and simply give no rows.
+-- -------------------------------------------------------------------------------------
+CREATE TEMP TABLE sun_times AS
+SELECT
+    l.name                                                           AS location,
+    (t.sunrise AT TIME ZONE 'Europe/Prague')::date                   AS local_date,
+    t.sunrise,
+    t.sunset,
+    to_char(t.sunrise AT TIME ZONE 'Europe/Prague', 'HH24:MI')       AS sunrise_local,
+    to_char(t.sunset  AT TIME ZONE 'Europe/Prague', 'HH24:MI')       AS sunset_local
+FROM (
+    SELECT DISTINCT ON (location_slug) location_slug, sunrise, sunset
+    FROM rain.fetches
+    WHERE source = 'open-meteo'
+      AND sunrise IS NOT NULL
+      AND fetched_at >= current_setting('rain.now_utc')::timestamptz
+                        - make_interval(hours => current_setting('rain.stale_after_hours')::int)
+    ORDER BY location_slug, fetched_at DESC
+) AS f
+JOIN rain.locations AS l ON l.slug = f.location_slug
+CROSS JOIN LATERAL unnest(f.sunrise, f.sunset) AS t (sunrise, sunset)
+ORDER BY l.name, t.sunrise;

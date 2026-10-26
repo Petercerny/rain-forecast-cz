@@ -67,3 +67,24 @@ def test_render_site_writes_map_page_city_pages_and_data(tmp_path):
     assert "https://github.com/example/repo" in page
     assert "{{" not in (site / "index.html").read_text(encoding="utf-8")
     assert json.loads((site / "data.json").read_text(encoding="utf-8"))["locations"][0]["name"] == "České Budějovice"
+
+
+def test_data_json_carries_the_open_meteo_sky_values_and_sun_times():
+    loc = {**LOC, "sun": [{"date": "2026-10-26", "sunrise": "2026-10-26T04:42:00Z", "sunset": "2026-10-26T14:49:00Z",
+                           "sunrise_local": "05:42", "sunset_local": "15:49"}]}
+    loc["hourly"] = [{**hour("2026-10-26T08:00:00Z", 0.2, 0.0, 35, 7.5), "cloud_pct": 80, "cloud_low_pct": 60,
+                      "cloud_mid_pct": 40, "cloud_high_pct": 10, "is_day": 1, "sunshine_s": 900, "weather_code": 3,
+                      "visibility_m": 20000, "humidity_pct": 70, "wind_ms": 3.5, "gust_ms": 8.0, "wind_dir_deg": 250}]
+    data = build_data({**FORECAST, "locations": [loc]}, SUMMARIES)
+    h = data["locations"][0]["hourly"][0]
+    assert (h["cloud"], h["cloud_l"], h["cloud_m"], h["cloud_h"]) == (80, 60, 40, 10)
+    assert (h["day"], h["sun_s"], h["code"], h["vis"], h["hum"]) == (1, 900, 3, 20000, 70)
+    assert (h["wind"], h["gust"], h["dir"]) == (3.5, 8.0, 250)
+    assert data["locations"][0]["sun"][0]["sunrise_local"] == "05:42"
+
+
+def test_data_json_still_works_for_a_forecast_without_the_new_fields():
+    # Forecast files from before the sky values existed have none of the new keys.
+    h = build_data(FORECAST, SUMMARIES)["locations"][0]["hourly"][0]
+    assert h["cloud"] is None and h["wind"] is None and h["code"] is None
+    assert build_data(FORECAST, SUMMARIES)["locations"][0]["sun"] == []

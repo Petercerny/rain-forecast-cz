@@ -50,6 +50,22 @@ SCHEMA = pa.schema(
         ("precip_prob", pa.int32()),  # % ; null for MET Norway
         ("temp_c", pa.float64()),
         ("source_updated_at", pa.timestamp("us", tz="UTC")),  # model run time, if given
+        # Added later, Open-Meteo only (null for MET Norway and in files written before they existed).
+        # See src/parsers.py for what each one means.
+        ("cloud_pct", pa.int16()),
+        ("cloud_low_pct", pa.int16()),
+        ("cloud_mid_pct", pa.int16()),
+        ("cloud_high_pct", pa.int16()),
+        ("is_day", pa.int16()),
+        ("sunshine_s", pa.int16()),
+        ("weather_code", pa.int16()),
+        ("visibility_m", pa.int32()),
+        ("humidity_pct", pa.int16()),
+        ("wind_ms", pa.float32()),
+        ("gust_ms", pa.float32()),
+        ("wind_dir_deg", pa.int16()),
+        ("sunrise", pa.timestamp("us", tz="UTC")),
+        ("sunset", pa.timestamp("us", tz="UTC")),
     ]
 )
 
@@ -63,11 +79,23 @@ def trunc4(x: float) -> float:
 # ---------------------------------------------------------------- Open-Meteo
 
 
+# Everything we ask Open-Meteo for in ONE request per place (above 10 variables a request may count
+# as more than one call against the free limit, which is still tiny for our number of places).
+OPEN_METEO_HOURLY = (
+    "precipitation,precipitation_probability,temperature_2m,"
+    "cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
+    "is_day,sunshine_duration,weather_code,visibility,"
+    "relative_humidity_2m,wind_speed_10m,wind_gusts_10m,wind_direction_10m"
+)
+
+
 def fetch_open_meteo(loc: dict) -> dict:
     params = {
         "latitude": trunc4(loc["lat"]),
         "longitude": trunc4(loc["lon"]),
-        "hourly": "precipitation,precipitation_probability,temperature_2m",
+        "hourly": OPEN_METEO_HOURLY,
+        "daily": "sunrise,sunset",
+        "wind_speed_unit": "ms",  # m/s, the same unit as MET Norway
         "forecast_days": 3,
         "timezone": "UTC",  # keeps timestamps unambiguous
     }
@@ -143,7 +171,7 @@ def to_table(rows: list[dict], loc: dict, fetched_at: datetime, updated_at) -> l
     return [
         {"fetched_at": fetched_at, "location": loc["name"], "lat": loc["lat"], "lon": loc["lon"],
          "source_updated_at": updated_at, **r}
-        for r in rows
+        for r in rows  # keys a source does not have (MET Norway: clouds, wind...) become null in Parquet
     ]
 
 

@@ -21,19 +21,21 @@ from datetime import datetime, timedelta, timezone
 import pyarrow.parquet as pq
 
 from src.common import BUILD_DIR, SNAPSHOT_DIR, slugify
-from src.db import connect, pack_fetch
+from src.db import DAILY_ARRAYS, HOURLY_ARRAYS, connect, pack_fetch
 
 log = logging.getLogger("load_db")
 
 FILE_RE = re.compile(r"source=(?P<source>[^/\\]+)[/\\]date=(?P<date>[\d-]+)[/\\]part-(?P<stamp>\d{8}T\d{6}Z)\.parquet$")
 
-INSERT_FETCH = """
-INSERT INTO rain.fetches
-    (source, location_slug, fetched_at, source_updated_at, first_hour, precip_mm, precip_prob, temp_c)
-VALUES (%(source)s, %(slug)s, %(fetched_at)s, %(source_updated_at)s, %(first_hour)s,
-        %(precip_mm)s, %(precip_prob)s, %(temp_c)s)
-ON CONFLICT (source, location_slug, fetched_at) DO NOTHING
-"""
+# The array columns come from the lists in src/db.py, so a new column is added in one place.
+_ARRAY_COLUMNS = HOURLY_ARRAYS + DAILY_ARRAYS
+INSERT_FETCH = (
+    "INSERT INTO rain.fetches (source, location_slug, fetched_at, source_updated_at, first_hour, "
+    + ", ".join(_ARRAY_COLUMNS) + ") "
+    "VALUES (%(source)s, %(slug)s, %(fetched_at)s, %(source_updated_at)s, %(first_hour)s, "
+    + ", ".join(f"%({c})s" for c in _ARRAY_COLUMNS) + ") "
+    "ON CONFLICT (source, location_slug, fetched_at) DO NOTHING"
+)
 UPSERT_LOCATION = """
 INSERT INTO rain.locations (slug, name, lat, lon) VALUES (%s, %s, %s, %s)
 ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, lat = EXCLUDED.lat, lon = EXCLUDED.lon

@@ -41,7 +41,7 @@ flowchart LR
 
 | Table / view | What it holds |
 | --- | --- |
-| `rain.fetches` | One row per source, location and download time. The hourly values are arrays (`precip_mm`, `precip_prob`, `temp_c`) starting at `first_hour`. About 200 MB a year, so the free 500 MB lasts around two years. |
+| `rain.fetches` | One row per source, location and download time. The hourly values are arrays starting at `first_hour`: `precip_mm`, `precip_prob`, `temp_c`, and, **from Open-Meteo only**, cloud cover (total and low/mid/high), `is_day`, `sunshine_s`, `weather_code` (WMO), `visibility_m`, `humidity_pct`, `wind_ms`, `gust_ms`, `wind_dir_deg`, plus `sunrise` / `sunset` per day. The new values are NULL for MET Norway and for fetches made before they were collected (migration `002`). |
 | `rain.forecast_hours` | A view that unpacks `fetches` to one row per forecast hour. Use this for analysis. |
 | `rain.locations` | Slug, name and coordinates of each place. |
 | `rain.ingest_runs` | A log of every pipeline run: rows loaded, failures, link to the GitHub run. |
@@ -55,6 +55,8 @@ data/cache/met_state.json          # MET Norway Expires / Last-Modified bookkeep
 ```
 
 Each row is one forecast hour as predicted at `fetched_at` (the schema is `SCHEMA` in `src/ingest.py`). The Parquet files are written first, so a database outage never loses data.
+
+The sky, light and wind columns were added later, so older files do not have them. When you read old and new files together, ask your tool to merge the columns by name (DuckDB: `read_parquet('data/snapshots/*/*/*.parquet', hive_partitioning = true, union_by_name = true)`). Open-Meteo is asked for everything in one request per place, in m/s for wind.
 
 ## Tech stack
 
@@ -153,7 +155,7 @@ The free plan **pauses a project after a week of low activity** and has **no aut
 
 **Restore** into an empty database (a new Supabase project, or after a mistake): check out the `data` branch into `data/`, run `python -m src.db_migrate`, then `python -m src.load_db --all`. Inserts are idempotent, so running it on a partly filled database is safe.
 
-**Growth.** The database grows about 200 MB a year, so the 500 MB free tier lasts around two years. Check it with `SELECT pg_size_pretty(pg_total_relation_size('rain.fetches'));`. The `data` branch grows around 100 MB a year, and git keeps all of it forever. When it gets large:
+**Growth.** With only rain and temperature the database grew about 280 MB a year (measured: about 1.2 KB per fetch). The extra Open-Meteo arrays make an Open-Meteo fetch several times bigger, so expect roughly 400 to 570 MB a year for 13 places, and the 500 MB free tier would last about a year. Measure it with `SELECT pg_size_pretty(pg_total_relation_size('rain.fetches'));` and `SELECT avg(pg_column_size(f.*)) FROM rain.fetches f WHERE source = 'open-meteo';`. Keeping only a rolling window in the database and archiving the rest as Parquet files is the planned fix. The `data` branch grows around 100 MB a year, and git keeps all of it forever. When it gets large:
 
 - **Squash the history:** reduce the `data` branch to a single commit (`git checkout --orphan`, re-add, force-push). The files stay, the old commits go.
 - **Or move the files out of git** to object storage (S3, R2, Azure Blob), and keep only the pipeline in the repo.

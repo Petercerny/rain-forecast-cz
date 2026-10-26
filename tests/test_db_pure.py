@@ -93,3 +93,63 @@ def test_pipeline_url_swaps_user_keeps_project_ref_and_encodes_password():
 
 def test_pipeline_url_on_a_plain_postgres_server():
     assert pipeline_url("postgresql://postgres:x@localhost:5432/db", "pw") == "postgresql://pipeline:pw@localhost:5432/db"
+
+
+# ---- the sky, light and wind arrays
+
+from src.db import DAILY_ARRAYS, HOURLY_ARRAYS, OPTIONAL_ARRAYS  # noqa: E402
+from src.ingest import SCHEMA, fetch_open_meteo  # noqa: E402
+
+
+def test_pack_stores_optional_arrays_and_aligns_gaps():
+    rows = hourly_rows({0: 0.0, 2: 1.0}, extras={"cloud_pct": {0: 40, 2: 90}, "wind_ms": {0: 2.5, 2: 4.0}})
+    p = pack_fetch(rows)
+    assert p["cloud_pct"] == [40, None, 90]           # the missing hour 1 stays aligned
+    assert p["wind_ms"] == [2.5, None, 4.0]
+    assert p["weather_code"] is None                  # never provided -> NULL, not an array of NULLs
+
+
+def test_pack_gives_null_for_every_optional_array_of_a_met_style_fetch():
+    p = pack_fetch(hourly_rows({0: 1.0, 1: 2.0}))
+    assert all(p[c] is None for c in OPTIONAL_ARRAYS)
+    assert p["precip_prob"] == [None, None]            # the original three always stay arrays
+    assert p["sunrise"] is None and p["sunset"] is None
+
+
+def test_pack_collects_the_distinct_daily_sun_times_in_order():
+    d1 = (datetime(2026, 7, 1, 3, 30, tzinfo=timezone.utc), datetime(2026, 7, 1, 19, 0, tzinfo=timezone.utc))
+    d2 = (datetime(2026, 7, 2, 3, 31, tzinfo=timezone.utc), datetime(2026, 7, 2, 18, 59, tzinfo=timezone.utc))
+    rows = hourly_rows({0: 0.0}, sun=d1) + [{**r, "hour_start": r["hour_start"] + timedelta(hours=20)}
+                                             for r in hourly_rows({0: 0.0}, sun=d2)]
+    p = pack_fetch(rows)
+    assert p["sunrise"] == [d1[0], d2[0]] and p["sunset"] == [d1[1], d2[1]]
+
+
+def test_round_trip_with_the_optional_arrays():
+    rows = hourly_rows({0: 0.5, 1: 1.5}, extras={"cloud_pct": {0: 10, 1: 20}, "gust_ms": {0: 5.5, 1: 6.5}})
+    back = unpack_fetch(**pack_fetch(rows))
+    assert [(r["cloud_pct"], r["gust_ms"], r["weather_code"]) for r in back] == [(10, 5.5, None), (20, 6.5, None)]
+
+
+def test_parquet_schema_and_column_lists_stay_in_sync():
+    names = set(SCHEMA.names)
+    assert set(HOURLY_ARRAYS) | set(DAILY_ARRAYS) <= names   # every stored array has a Parquet column
+
+
+def test_open_meteo_request_asks_for_every_variable_in_one_call(monkeypatch):
+    seen = {}
+
+    class Reply:
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    monkeypatch.setattr("src.ingest.requests.get", lambda url, params, timeout: seen.update(params=params) or Reply())
+    fetch_open_meteo({"name": "Praha", "lat": 50.088, "lon": 14.4208})
+    params = seen["params"]
+    hourly = params["hourly"].split(",")
+    for name in ("precipitation", "temperature_2m", "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
+                 "is_day", "sunshine_duration", "weather_code", "visibility", "relative_humidity_2m",
+                 "wind_speed_10m", "wind_gusts_10m", "wind_direction_10m"):
+        assert name in hourly
+    assert params["daily"] == "sunrise,sunset"
+    assert params["wind_speed_unit"] == "ms" and params["timezone"] == "UTC"

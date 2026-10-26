@@ -46,6 +46,7 @@ def build_forecast(con, now: datetime) -> dict:
     hourly = _rows(con, "hourly")
     daily = _rows(con, "daily")
     peaks = _rows(con, "peak_hours")
+    sun_times = _rows(con, "sun_times")
     totals = {r["location"]: r for r in _rows(con, "location_totals")}
 
     locations = []
@@ -76,7 +77,14 @@ def build_forecast(con, now: datetime) -> dict:
                      "local_time": r["local_time"], "om_mm": r["om_mm"], "met_mm": r["met_mm"],
                      "prob_pct": r["om_prob_pct"], "om_temp_c": r["om_temp_c"],
                      "met_temp_c": r["met_temp_c"], "avg_temp_c": r["avg_temp_c"],
-                     "diff_mm": r["diff_mm"]}
+                     "diff_mm": r["diff_mm"],
+                     # Open-Meteo only: sky, light and wind (None when not available)
+                     "cloud_pct": r["om_cloud_pct"], "cloud_low_pct": r["om_cloud_low_pct"],
+                     "cloud_mid_pct": r["om_cloud_mid_pct"], "cloud_high_pct": r["om_cloud_high_pct"],
+                     "is_day": r["om_is_day"], "sunshine_s": r["om_sunshine_s"],
+                     "weather_code": r["om_weather_code"], "visibility_m": r["om_visibility_m"],
+                     "humidity_pct": r["om_humidity_pct"], "wind_ms": r["om_wind_ms"],
+                     "gust_ms": r["om_gust_ms"], "wind_dir_deg": r["om_wind_dir_deg"]}
                     for r in sorted(hourly, key=lambda r: r["hour_start"]) if r["location"] == name
                 ],
                 "daily": [
@@ -85,13 +93,22 @@ def build_forecast(con, now: datetime) -> dict:
                      "om_tmin_c": r["om_tmin_c"], "om_tmax_c": r["om_tmax_c"],
                      "met_tmin_c": r["met_tmin_c"], "met_tmax_c": r["met_tmax_c"],
                      "avg_tmin_c": r["avg_tmin_c"], "avg_tmax_c": r["avg_tmax_c"],
-                     "max_prob_pct": r["max_prob_pct"]}
+                     "max_prob_pct": r["max_prob_pct"],
+                     "cloud_avg_pct": r["cloud_avg_pct"], "sunshine_h": r["sunshine_h"],
+                     "wind_max_ms": r["wind_max_ms"], "gust_max_ms": r["gust_max_ms"],
+                     "humidity_avg_pct": r["humidity_avg_pct"], "visibility_min_m": r["visibility_min_m"],
+                     "worst_weather_code": r["worst_weather_code"]}
                     for r in daily if r["location"] == name
                 ],
                 "peaks": [
                     {"t": _iso(r["hour_start"]), "local_date": r["local_date"].isoformat(),
                      "local_time": r["local_time"], "open_meteo_mm": r["om_mm"], "met_no_mm": r["met_mm"]}
                     for r in peaks if r["location"] == name
+                ],
+                "sun": [  # sunrise / sunset per Prague day (Open-Meteo)
+                    {"date": r["local_date"].isoformat(), "sunrise": _iso(r["sunrise"]), "sunset": _iso(r["sunset"]),
+                     "sunrise_local": r["sunrise_local"], "sunset_local": r["sunset_local"]}
+                    for r in sun_times if r["location"] == name
                 ],
             }
         )

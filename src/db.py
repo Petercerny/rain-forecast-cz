@@ -11,6 +11,19 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 HOUR = timedelta(hours=1)
+
+# The hourly values stored per fetch, one Postgres array column each (same names as the Parquet
+# columns). The first three always exist; the rest come from Open-Meteo only, so they are NULL for
+# MET Norway and for fetches made before they were added. This list is the one place to extend.
+REQUIRED_ARRAYS = ("precip_mm", "precip_prob", "temp_c")
+OPTIONAL_ARRAYS = (
+    "cloud_pct", "cloud_low_pct", "cloud_mid_pct", "cloud_high_pct",
+    "is_day", "sunshine_s", "weather_code", "visibility_m", "humidity_pct",
+    "wind_ms", "gust_ms", "wind_dir_deg",
+)
+HOURLY_ARRAYS = REQUIRED_ARRAYS + OPTIONAL_ARRAYS
+# Daily values (one element per day, a handful per fetch).
+DAILY_ARRAYS = ("sunrise", "sunset")
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -33,10 +46,13 @@ def connect(url: str | None = None, *, autocommit: bool = False) -> psycopg.Conn
 
 
 def pack_fetch(rows: list[dict]) -> dict:
-    """Parsed hourly rows -> {first_hour, precip_mm, precip_prob, temp_c} with NULL for gaps.
+    """Parsed hourly rows -> {first_hour, <one array per HOURLY_ARRAYS column>, sunrise, sunset}.
 
-    Each row needs hour_start (a whole hour), precip_mm, precip_prob and temp_c. The list may be
-    unsorted. An hour that is missing between the first and the last becomes None in all three arrays.
+    Each row needs hour_start (a whole hour) plus the HOURLY_ARRAYS keys (the optional ones may be
+    missing). The list may be unsorted. An hour missing between the first and the last becomes None
+    in every array. An optional array that is None for every hour is returned as None (stored as
+    NULL, which is what every MET Norway fetch gets). sunrise / sunset are the distinct daily
+    values found in the rows, oldest first.
     """
     if not rows:
         raise ValueError("cannot pack an empty fetch")
@@ -48,17 +64,33 @@ def pack_fetch(rows: list[dict]) -> dict:
         by_hour[h] = r  # if an hour appears twice the last one wins
     first, last = min(by_hour), max(by_hour)
     n = int((last - first) / HOUR) + 1
-    precip, prob, temp = [None] * n, [None] * n, [None] * n
-    for h, r in by_hour.items():
-        i = int((h - first) / HOUR)
-        precip[i], prob[i], temp[i] = r["precip_mm"], r["precip_prob"], r["temp_c"]
-    return {"first_hour": first, "precip_mm": precip, "precip_prob": prob, "temp_c": temp}
+    packed = {"first_hour": first}
+    for col in HOURLY_ARRAYS:
+        values = [None] * n
+        for h, r in by_hour.items():
+            values[int((h - first) / HOUR)] = r.get(col)
+        packed[col] = None if col in OPTIONAL_ARRAYS and all(v is None for v in values) else values
+    days = sorted({(r["sunrise"], r["sunset"]) for r in rows if r.get("sunrise") and r.get("sunset")})
+    packed["sunrise"] = [d[0] for d in days] or None
+    packed["sunset"] = [d[1] for d in days] or None
+    return packed
 
 
-def unpack_fetch(first_hour: datetime, precip_mm: list, precip_prob: list, temp_c: list) -> list[dict]:
-    """The reverse of pack_fetch. Hours without a precipitation value (gaps) are left out."""
-    return [
-        {"hour_start": first_hour + i * HOUR, "precip_mm": p, "precip_prob": pr, "temp_c": t}
-        for i, (p, pr, t) in enumerate(zip(precip_mm, precip_prob, temp_c))
-        if p is not None
-    ]
+def unpack_fetch(first_hour: datetime, precip_mm: list, precip_prob: list, temp_c: list, **others) -> list[dict]:
+    """The reverse of pack_fetch (the daily sunrise / sunset values are ignored).
+
+    Hours without a precipitation value (gaps) are left out. An optional array that is None gives
+    None for that value in every row.
+    """
+    arrays = {"precip_mm": precip_mm, "precip_prob": precip_prob, "temp_c": temp_c}
+    arrays.update({k: v for k, v in others.items() if k in OPTIONAL_ARRAYS})
+    rows = []
+    for i, p in enumerate(precip_mm):
+        if p is None:
+            continue
+        row = {"hour_start": first_hour + i * HOUR}
+        for col in HOURLY_ARRAYS:
+            values = arrays.get(col)
+            row[col] = None if values is None else values[i]
+        rows.append(row)
+    return rows

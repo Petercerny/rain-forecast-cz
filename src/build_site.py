@@ -83,10 +83,17 @@ def build_data(forecast: dict, summaries: dict, carto_key: str = "") -> dict:
                 "totals": loc["totals"],
                 "daily": loc["daily"],
                 "peaks": loc["peaks"],
+                "sun": loc.get("sun", []),
                 "periods": build_periods(loc, today),
                 "hourly": [
                     {"t": h["t"], "om": h["om_mm"], "met": h["met_mm"], "prob": h["prob_pct"],
-                     "om_temp": h["om_temp_c"], "met_temp": h["met_temp_c"], "temp": h["avg_temp_c"]}
+                     "om_temp": h["om_temp_c"], "met_temp": h["met_temp_c"], "temp": h["avg_temp_c"],
+                     # Open-Meteo only, null when not available. Short keys keep data.json small.
+                     "cloud": h.get("cloud_pct"), "cloud_l": h.get("cloud_low_pct"),
+                     "cloud_m": h.get("cloud_mid_pct"), "cloud_h": h.get("cloud_high_pct"),
+                     "day": h.get("is_day"), "sun_s": h.get("sunshine_s"), "code": h.get("weather_code"),
+                     "vis": h.get("visibility_m"), "hum": h.get("humidity_pct"),
+                     "wind": h.get("wind_ms"), "gust": h.get("gust_ms"), "dir": h.get("wind_dir_deg")}
                     for h in loc["hourly"]
                 ],
             }

@@ -91,3 +91,44 @@ def test_pipeline_role_can_read_but_not_change_the_structure_or_delete_history(c
     with pytest.raises(psycopg.errors.InsufficientPrivilege):           # may not delete history
         conn.execute("DELETE FROM rain.fetches")
     conn.rollback()
+
+
+# ---- migration 002: sky, light and wind arrays
+
+def test_old_style_and_new_style_fetches_both_show_up_in_the_view(conn):
+    add_fetch(conn, "met-no", NOW, "Praha", {0: 1.0, 1: 2.0})                         # no extra arrays (NULL)
+    add_fetch(conn, "open-meteo", NOW, "Praha", {0: 0.0, 1: 0.5},
+              extras={"cloud_pct": {0: 30, 1: 80}, "wind_ms": {0: 2.5, 1: 4.0}, "weather_code": {0: 2, 1: 61}})
+    rows = conn.execute("SELECT source, precip_mm, cloud_pct, wind_ms, weather_code FROM rain.forecast_hours "
+                        "ORDER BY source, hour_start").fetchall()
+    assert rows == [("met-no", 1.0, None, None, None), ("met-no", 2.0, None, None, None),
+                    ("open-meteo", 0.0, 30, 2.5, 2), ("open-meteo", 0.5, 80, 4.0, 61)]
+
+
+def test_an_extra_array_of_the_wrong_length_is_rejected(conn):
+    add_fetch(conn, "open-meteo", NOW, "Praha", {0: 1.0})
+    conn.commit()
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute(
+            "INSERT INTO rain.fetches (source, location_slug, fetched_at, first_hour, precip_mm, precip_prob, temp_c, cloud_pct) "
+            "VALUES ('open-meteo', 'praha', %s, %s, '{1,2}', '{NULL,NULL}', '{5,6}', '{50}')", (NOW + timedelta(hours=1), H0))
+
+
+def test_load_db_loads_the_new_columns_from_parquet_and_old_files_without_them(tmp_path, conn):
+    from datetime import datetime, timezone
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    sun = (datetime(2026, 7, 1, 3, 15, tzinfo=timezone.utc), datetime(2026, 7, 1, 19, 45, tzinfo=timezone.utc))
+    write_parquet(tmp_path, "open-meteo", NOW - timedelta(hours=1), "Praha", {0: 0.0, 1: 0.5},
+                  extras={"cloud_pct": {0: 30, 1: 80}, "visibility_m": {0: 20000, 1: 9000}}, sun=sun)
+    # An OLD file: written before the new columns existed (a table without them).
+    old = write_parquet(tmp_path, "met-no", NOW - timedelta(hours=1), "Praha", {0: 1.0})
+    keep = ["fetched_at", "location", "lat", "lon", "valid_time", "hour_start", "precip_mm", "precip_prob", "temp_c",
+            "source_updated_at"]
+    pq.write_table(pq.read_table(old).select(keep), old)
+
+    assert load_files(conn, list_files(tmp_path)) == {"files": 2, "fetches": 2}
+    row = conn.execute("SELECT cloud_pct, visibility_m, sunrise, sunset FROM rain.fetches WHERE source = 'open-meteo'").fetchone()
+    assert row == ([30, 80], [20000, 9000], [sun[0]], [sun[1]])
+    row = conn.execute("SELECT cloud_pct, sunrise FROM rain.fetches WHERE source = 'met-no'").fetchone()
+    assert row == (None, None)

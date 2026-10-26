@@ -2,35 +2,59 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Rain and temperature forecast for {{CITY_NAME}}</title>
   <meta name="description" content="Next 48 hours of rain and temperature for {{CITY_NAME}}, comparing Open-Meteo and MET Norway.">
+  <!-- Theme and animation switches are applied before the first paint, so there is no flash. -->
+  <script>
+    (function () {
+      var d = document.documentElement, t, f;
+      try { t = localStorage.getItem("rf-theme"); f = localStorage.getItem("rf-fx"); } catch (e) {}
+      if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      if (f !== "on" && f !== "off") f = matchMedia("(prefers-reduced-motion: reduce)").matches ? "off" : "on";
+      d.dataset.theme = t; d.dataset.fx = f;
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="../style.css">
 </head>
 <!-- Template: build_site.py writes one copy per city to site/<slug>/index.html -->
-<body data-root="../" data-city="{{CITY_NAME}}">
-  <header>
-    <a class="back" href="../">&larr; Back to the map</a>
-    <h1>{{CITY_NAME}}</h1>
-    <p class="sub">Rain and temperature in the next 48 hours.</p>
+<body class="page-city" data-root="../" data-city="{{CITY_NAME}}">
+  <header class="cbar glass">
+    <a class="back" href="../" id="back"><span id="back-ic"></span>Map</a>
+    <label class="picker">
+      <span class="sr-only">Switch place</span>
+      <select id="location" aria-label="Choose another place"></select>
+    </label>
+    <span id="switches" class="switches"></span>
   </header>
 
   <main>
     <p id="stale" class="stale" role="status" hidden></p>
-    <label class="picker">
-      <span>Switch place</span>
-      <select id="location" aria-label="Choose another place"></select>
-    </label>
 
-    <p id="now" class="now-stats"></p>
+    <section id="hero" class="hero lvl--1 rise" aria-labelledby="city-h">
+      <div id="hero-fx" class="hero-fx" aria-hidden="true"></div>
+      <p class="eyebrow">Right now</p>
+      <h1 id="city-h">{{CITY_NAME}}</h1>
+      <div class="hero-row">
+        <span class="hero-ic" id="hero-icon"></span>
+        <div>
+          <p class="hero-temp" id="hero-temp">–</p>
+          <p class="hero-cond" id="hero-cond"></p>
+        </div>
+      </div>
+      <p class="chips" id="hero-chips"></p>
+    </section>
 
-    <section aria-labelledby="summary-h">
-      <h2 id="summary-h" class="sr-only">Summary</h2>
+    <section class="card rise" style="--i:1" aria-labelledby="summary-h">
+      <h2 id="summary-h">Summary</h2>
       <p id="summary" class="summary">Loading…</p>
       <p id="ai-label" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
     </section>
 
-    <section aria-labelledby="chart-h">
+    <section class="card rise" style="--i:2" aria-labelledby="chart-h">
       <h2 id="chart-h">Hourly rain and temperature</h2>
       <div class="chart-box">
         <canvas id="chart" role="img" aria-label="Chart of hourly rain in millimetres (bars) and temperature in degrees Celsius (lines) from Open-Meteo and MET Norway"></canvas>
@@ -38,40 +62,39 @@
       <p class="note">Times are Europe/Prague. Each bar is the rain in the hour starting at that time. Tap a legend entry to show or hide it; "Rain chance" is hidden at first.</p>
     </section>
 
-    <section aria-labelledby="daily-h">
+    <section class="card rise" style="--i:3" aria-labelledby="daily-h">
       <h2 id="daily-h">Per day</h2>
-      <div class="table-wrap">
-        <table id="daily">
-          <thead><tr><th>Day</th><th>Rain</th><th>Temperature (low to high)</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
+      <div id="daily" class="day-grid"></div>
       <p class="note"><span class="dot om"></span> Open-Meteo, <span class="dot met"></span> MET Norway. The first and last days are partial: the window is 48 hours from the last update.</p>
     </section>
 
     <p id="status" class="status"></p>
   </main>
 
-  <footer>
-    <p><strong>Last updated:</strong> <span id="updated">…</span></p>
-    <p>
-      Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>
-      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) and
-      <a href="https://api.met.no/">MET Norway</a>
-      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
-      Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
-    </p>
-    <p>
-      Open-source, non-commercial hobby project:
-      <a href="{{REPO_URL}}">source code and data on GitHub</a>.
-      Forecasts can be wrong, so do not rely on this for safety decisions.
-    </p>
+  <footer class="foot">
+    <div class="card">
+      <p><strong>Last updated:</strong> <span id="updated">…</span></p>
+      <p>
+        Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) and
+        <a href="https://api.met.no/">MET Norway</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
+        Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
+      </p>
+      <p>
+        Open-source, non-commercial hobby project:
+        <a href="{{REPO_URL}}">source code and data on GitHub</a>.
+        Forecasts can be wrong, so do not rely on this for safety decisions.
+        The Inter font is loaded from Google Fonts, which sees your IP address.
+      </p>
+    </div>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
           integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
           crossorigin="anonymous"></script>
   <script src="../common.js"></script>
+  <script src="../fx.js"></script>
   <script src="../city.js"></script>
 </body>
 </html>

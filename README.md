@@ -34,7 +34,7 @@ flowchart LR
 | 1b | `src/load_db.py` | Copies the Parquet files into Postgres (one row per fetch, hourly values in arrays). Safe to repeat, and it re-checks the last 7 days, so a run that could not reach the database is repaired by the next one. |
 | 2 | `src/transform.py` + `sql/forecast_summary.sql` | PostgreSQL picks the newest fetch per source and city, joins the two sources hour by hour, and computes the 48-hour window, daily totals, wettest hours, temperatures and the difference between sources. |
 | 3 | `src/summarize.py` | Writes 2 to 3 sentences per city from the computed facts only. `template` (default) or `ollama` (local LLM). |
-| 4 | `src/build_site.py` + `web/` | Writes `site/data.json`, the map page (`index.html`) and one page per city (`site/<city>/index.html`, rendered from `web/city.html`). Vanilla JS, [Leaflet](https://leafletjs.com/) for the map and Chart.js for the charts, both from a CDN. |
+| 4 | `src/build_site.py` + `web/` | Writes `site/data.json`, the map page (`index.html`) and one page per city (`site/<city>/index.html`, rendered from `web/city.html`). Vanilla JS, [MapLibre GL](https://maplibre.org/) with [OpenFreeMap](https://openfreemap.org/) tiles for the map and Chart.js for the charts, both from a CDN. Light/dark theme and optional weather animations (`web/fx.js`). |
 | 5 | `src/monitor.py` | Separate workflow job: fails (and opens a GitHub issue) when a source has had no new data for too long. |
 
 **The database** (`db/migrations/001_init.sql`, schema `rain`):
@@ -58,7 +58,7 @@ Each row is one forecast hour as predicted at `fetched_at` (the schema is `SCHEM
 
 ## Tech stack
 
-Python 3.11+, PostgreSQL on [Supabase](https://supabase.com/) (free tier) with psycopg 3, PyArrow (Parquet), requests, PyYAML, pytest, [Leaflet](https://leafletjs.com/) + [CARTO](https://carto.com/basemaps/) map tiles, [Chart.js](https://www.chartjs.org/) (CDNs, pinned versions with SRI hashes), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
+Python 3.11+, PostgreSQL on [Supabase](https://supabase.com/) (free tier) with psycopg 3, PyArrow (Parquet), requests, PyYAML, pytest, [MapLibre GL](https://maplibre.org/) + [OpenFreeMap](https://openfreemap.org/) map tiles, [Chart.js](https://www.chartjs.org/) (CDNs, pinned versions with SRI hashes), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
 
 ## Run it locally
 
@@ -115,7 +115,7 @@ The model name and URL live under `ollama:` in `config/settings.yaml`. The model
 2. **Settings → Pages → Source: GitHub Actions.**
 3. **Settings → Secrets and variables → Actions → Variables**, add:
    - `USER_AGENT` = `rain-forecast-cz/0.1 https://github.com/<you>/<repo>`
-   - `CARTO_KEY` = your free CARTO basemaps key (request one at <https://carto.com/basemaps/apikey/>: just an email, no account). It is visible in the page source like any map key, so restrict it to your `<user>.github.io` domain in CARTO. Without it the map falls back to OpenStreetMap tiles.
+   - `CARTO_KEY` is no longer used: the map now uses keyless OpenFreeMap tiles. It can be removed.
    - `REPO_URL` (optional; defaults to the repository's own URL)
 4. Set up the database (next section) and add the secret `DATABASE_URL`.
 5. **Actions → Update forecast → Run workflow** once. After that it runs hourly at minute 23.
@@ -139,7 +139,8 @@ python -m src.db_migrate --create-pipeline-role  # prints the connection string 
 ```bash
 git fetch origin data
 git worktree add ../rain-forecast-data origin/data
-DATA_DIR=../rain-forecast-data python -m src.load_db --all      # PowerShell: $env:DATA_DIR = "..ain-forecast-data"
+DATA_DIR=../rain-forecast-data python -m src.load_db --all      # PowerShell: $env:DATA_DIR = "..
+ain-forecast-data"
 ```
 
 The free plan **pauses a project after a week of low activity** and has **no automatic backups**. The hourly writes keep it active (check the Supabase dashboard after a couple of weeks to be sure), and the Parquet files are your backup. A paused project makes the workflow fail loudly while the last published site stays online: unpause it in the dashboard.
@@ -173,7 +174,7 @@ In a public repository GitHub **automatically disables scheduled workflows when 
 - Code: MIT, see [`LICENSE`](LICENSE).
 - Data: Open-Meteo and MET Norway, both CC BY 4.0, see [`DATA_LICENSES.md`](DATA_LICENSES.md). The attribution is shown in the site footer and travels with the snapshots on the `data` branch. The database content is derived from the same data, so the same attribution applies to it.
 - **This is a non-commercial project.** The site has no ads, no tracking and no monetization, because Open-Meteo's free tier is for non-commercial use only. Please keep it that way if you fork it (or switch to a paid plan).
-- Map tiles come from CARTO (with an API key, free for non-commercial use up to 5 million requests a month) or OpenStreetMap as the fallback. The map shows the required attribution. Visitors' browsers request tiles from those servers directly, so those servers see their IP addresses.
+- Map tiles come from OpenFreeMap (no key needed) and the Inter font from Google Fonts. The map shows the required attribution. Visitors' browsers request these directly, so those servers see their IP addresses.
 - Request volume is tiny: about 13 calls per hour to each weather API, far below Open-Meteo's free limits. For MET Norway the pipeline truncates coordinates to 4 decimals, sends the `User-Agent` from `USER_AGENT`, does not call again before the `Expires` time, and sends `If-Modified-Since`.
 
 ## What I learned / what's next

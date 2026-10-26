@@ -2,84 +2,129 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Rain forecast for Czech cities</title>
   <meta name="description" content="Rain chance and temperature on a map of Czechia for the next 48 hours, comparing Open-Meteo and MET Norway.">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+  <!-- Theme and animation switches are applied before the first paint, so there is no flash. -->
+  <script>
+    (function () {
+      var d = document.documentElement, t, f;
+      try { t = localStorage.getItem("rf-theme"); f = localStorage.getItem("rf-fx"); } catch (e) {}
+      if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      if (f !== "on" && f !== "off") f = matchMedia("(prefers-reduced-motion: reduce)").matches ? "off" : "on";
+      d.dataset.theme = t; d.dataset.fx = f;
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+        integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
   <link rel="stylesheet" href="style.css">
 </head>
-<body data-root="">
-  <header>
-    <h1>Rain and temperature in Czechia</h1>
-    <p class="sub">Next 48 hours, two free forecasts compared. Pick a day, then tap a place.</p>
+<body class="page-map" data-root="">
+  <div id="map" aria-label="Map of Czechia with rain chance and temperature per city"></div>
+  <div id="fx-layer" aria-hidden="true"></div>
+
+  <header class="topbar glass">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand-text">
+      <h1>Czechia Forecast</h1>
+      <p id="updated-short">Rain &amp; temperature, next 48 h</p>
+    </div>
   </header>
 
-  <main>
-    <p id="stale" class="stale" role="status" hidden></p>
-    <div id="tabs" class="tabs" role="tablist" aria-label="Time period"></div>
+  <div class="toolbar glass" id="toolbar">
+    <button type="button" class="tool tool-text" id="open-places" aria-expanded="false" aria-controls="drawer"></button>
+    <button type="button" class="tool" id="open-about" aria-label="About and data credits" title="About and data credits"></button>
+  </div>
 
-    <div class="map-box">
-      <div id="map" aria-label="Map of Czechia with rain chance and temperature per city"></div>
-    </div>
+  <p id="stale" class="toast" role="status" hidden></p>
 
-    <ul class="legend" aria-label="Legend">
-      <li><span class="lg lvl-0" data-icon="0"></span> under 20% rain chance</li>
-      <li><span class="lg lvl-1" data-icon="1"></span> 20-49%</li>
-      <li><span class="lg lvl-2" data-icon="2"></span> 50-79%</li>
+  <nav id="tabs" class="seg glass" role="tablist" aria-label="Time period"></nav>
+
+  <div class="map-ctl glass" id="map-ctl"></div>
+
+  <details class="legend glass" id="legend">
+    <summary>Legend</summary>
+    <ul aria-label="Legend">
+      <li><span class="lg lvl-0" data-icon="0"></span> Under 20% rain chance</li>
+      <li><span class="lg lvl-1" data-icon="1"></span> 20–49%</li>
+      <li><span class="lg lvl-2" data-icon="2"></span> 50–79%</li>
       <li><span class="lg lvl-3" data-icon="3"></span> 80% or more</li>
     </ul>
-    <p class="note">Rain chance is from Open-Meteo. The number next to it is the temperature (average of both sources; the highest of the day on day tabs).</p>
+    <p>Rain chance is from Open-Meteo. Big number: temperature (average of both sources; the day's high on day tabs).</p>
+  </details>
 
-    <section aria-labelledby="list-h">
-      <h2 id="list-h">All places</h2>
-      <ul id="place-list" class="place-list"></ul>
-    </section>
-
+  <aside id="drawer" class="panel drawer glass" aria-labelledby="drawer-title" inert>
+    <div class="panel-head">
+      <h2 id="drawer-title">All places</h2>
+      <button type="button" class="tool" id="drawer-close" aria-label="Close list"></button>
+    </div>
+    <ul id="place-list" class="place-list"></ul>
     <p id="status" class="status"></p>
-  </main>
+  </aside>
 
-  <dialog id="modal" aria-labelledby="modal-title">
-    <div class="modal-body">
-      <div class="modal-head">
-        <h2 id="modal-title"></h2>
-        <button type="button" id="modal-close" class="icon-btn" aria-label="Close">&times;</button>
+  <aside id="sheet" class="panel sheet glass" role="dialog" aria-labelledby="sheet-title" inert>
+    <div id="sheet-hero" class="sheet-hero lvl-0">
+      <div class="hero-bar">
+        <p class="eyebrow" id="sheet-period"></p>
+        <button type="button" class="tool on-color" id="sheet-close" aria-label="Close"></button>
       </div>
-      <p id="modal-stats" class="modal-stats"></p>
-      <p id="modal-summary" class="summary"></p>
-      <p id="modal-ai" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
-      <div class="chart-box compact"><canvas id="modal-chart" role="img" aria-label="Hourly rain and temperature chart"></canvas></div>
-      <a id="modal-link" class="btn" href="#">Full details &rarr;</a>
+      <h2 id="sheet-title"></h2>
+      <div class="hero-main">
+        <span class="hero-ic" id="sheet-icon"></span>
+        <div>
+          <p class="hero-temp" id="sheet-temp"></p>
+          <p class="hero-cond" id="sheet-cond"></p>
+        </div>
+      </div>
+      <p class="chips" id="sheet-chips"></p>
+    </div>
+    <div class="sheet-body">
+      <p id="sheet-summary" class="summary"></p>
+      <p id="sheet-ai" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
+      <div class="chart-box compact"><canvas id="sheet-chart" role="img" aria-label="Hourly rain and temperature chart"></canvas></div>
+      <a id="sheet-link" class="btn" href="#">Full details <span class="btn-ic" id="sheet-link-ic"></span></a>
+    </div>
+  </aside>
+
+  <dialog id="about" class="about" aria-labelledby="about-title">
+    <div class="about-body">
+      <div class="panel-head">
+        <h2 id="about-title">About &amp; data credits</h2>
+        <button type="button" class="tool" id="about-close" aria-label="Close"></button>
+      </div>
+      <p><strong>Last updated:</strong> <span id="updated">…</span></p>
+      <p>
+        Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) and
+        <a href="https://api.met.no/">MET Norway</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
+        Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
+      </p>
+      <p>
+        Map: <a href="https://openfreemap.org/">OpenFreeMap</a> tiles,
+        &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a>, data &copy;
+        <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>,
+        rendered with <a href="https://maplibre.org/">MapLibre GL JS</a>.
+        The map tiles and the Inter font are loaded from third-party servers, which see your IP address.
+      </p>
+      <p>
+        Open-source, non-commercial hobby project:
+        <a href="{{REPO_URL}}">source code and data on GitHub</a>.
+        Forecasts can be wrong, so do not rely on this for safety decisions.
+      </p>
     </div>
   </dialog>
 
-  <footer>
-    <p><strong>Last updated:</strong> <span id="updated">…</span></p>
-    <p>
-      Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>
-      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) and
-      <a href="https://api.met.no/">MET Norway</a>
-      (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
-      Data is reformatted and summarised; MET Norway and Open-Meteo do not endorse this site.
-    </p>
-    <p>
-      Map: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>,
-      &copy; <a href="https://carto.com/attributions">CARTO</a>, rendered with <a href="https://leafletjs.com/">Leaflet</a>.
-      The map tiles are loaded from a third-party server, which sees your IP address.
-    </p>
-    <p>
-      Open-source, non-commercial hobby project:
-      <a href="{{REPO_URL}}">source code and data on GitHub</a>.
-      Forecasts can be wrong, so do not rely on this for safety decisions.
-    </p>
-  </footer>
-
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+          integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
           integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
           crossorigin="anonymous"></script>
   <script src="common.js"></script>
+  <script src="fx.js"></script>
   <script src="map.js"></script>
 </body>
 </html>

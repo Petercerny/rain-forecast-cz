@@ -22,12 +22,12 @@ and stores is *not* covered by that license. It comes from two third parties, ea
 
 ## Map tiles and libraries (not weather data)
 
-- Map tiles: **&copy; OpenStreetMap contributors** (data under the [ODbL](https://www.openstreetmap.org/copyright)) and
-  **&copy; CARTO** basemaps (<https://carto.com/basemaps/>, free for non-commercial use with a key).
-  If no CARTO key is configured the site falls back to the standard OpenStreetMap tile server
-  (see its [tile usage policy](https://operations.osmfoundation.org/policies/tiles/)).
-- [Leaflet](https://leafletjs.com/) (BSD-2-Clause) draws the map; [Chart.js](https://www.chartjs.org/) (MIT) draws the charts.
-  Both are loaded from a CDN. The weather icons are drawn inline by this project.
+- Map tiles: vector tiles served by [OpenFreeMap](https://openfreemap.org/), a free service that needs no key.
+  **&copy; OpenMapTiles** (<https://openmaptiles.org/>) schema and **&copy; OpenStreetMap contributors**
+  (data under the [ODbL](https://www.openstreetmap.org/copyright)). The map shows this attribution.
+- [MapLibre GL JS](https://maplibre.org/) (BSD-3-Clause) draws the map; [Chart.js](https://www.chartjs.org/) (MIT) draws the charts.
+  Both are loaded from a CDN. The weather icons and animations are drawn by this project.
+- The [Inter](https://rsms.me/inter/) font (SIL Open Font License) is loaded from Google Fonts.
 
 ## Derived data
 

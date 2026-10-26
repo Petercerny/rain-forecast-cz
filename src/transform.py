@@ -1,42 +1,44 @@
-"""Step 2: run sql/forecast_summary.sql with DuckDB and write build/forecast.json.
+"""Step 2: run sql/forecast_summary.sql in the Postgres database and write build/forecast.json.
 
 The SQL does the real work (joining the sources, daily totals, peak hours). This file only
 feeds it parameters and turns the resulting tables into a JSON file for the next steps.
+Needs DATABASE_URL (see .env.example).
 
 Usage:  python -m src.transform
 """
 import json
 import sys
 from datetime import datetime, timezone
+from decimal import Decimal
 
-import duckdb
+from psycopg.rows import dict_row
 
-from src.common import BUILD_DIR, SNAPSHOT_DIR, SQL_DIR, load_locations, load_settings
+from src.common import BUILD_DIR, SQL_DIR, load_locations, load_settings
+from src.db import connect
 
 
 def _iso(ts) -> str | None:
     return None if ts is None else ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _rows(con, table: str) -> list[dict]:
-    """Read a whole DuckDB table as a list of dicts (column name -> value)."""
-    cur = con.execute(f"SELECT * FROM {table}")
-    names = [d[0] for d in cur.description]
-    return [dict(zip(names, row)) for row in cur.fetchall()]
+def _rows(conn, table: str) -> list[dict]:
+    """Read a whole (temp) table as a list of dicts (column name -> value)."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(f"SELECT * FROM {table}")
+        # Postgres returns exact decimals for numeric columns; the JSON files want plain floats.
+        return [{k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()} for row in cur]
 
 
-def run_sql(snapshot_dir=SNAPSHOT_DIR, now: datetime | None = None) -> duckdb.DuckDBPyConnection:
-    """Execute the SQL file and return the connection holding the result tables."""
+def run_sql(conn, now: datetime | None = None):
+    """Execute the SQL file on this connection. The result tables are TEMP tables of the session."""
     settings = load_settings()
     now = now or datetime.now(timezone.utc)
-    con = duckdb.connect()  # in-memory database, nothing is kept between runs
-    # Variables are read inside the SQL with getvariable('...').
-    con.execute("SET VARIABLE snapshot_glob = ?", [str(snapshot_dir / "*" / "*" / "*.parquet")])
-    con.execute("SET VARIABLE now_utc = ?::TIMESTAMPTZ", [now.isoformat()])
-    con.execute("SET VARIABLE window_hours = ?", [settings["window_hours"]])
-    con.execute("SET VARIABLE stale_after_hours = ?", [settings["stale_after_hours"]])
-    con.execute((SQL_DIR / "forecast_summary.sql").read_text(encoding="utf-8"))
-    return con
+    # Settings are read inside the SQL with current_setting('rain.name').
+    for name, value in (("now_utc", now.isoformat()), ("window_hours", settings["window_hours"]),
+                        ("stale_after_hours", settings["stale_after_hours"])):
+        conn.execute("SELECT set_config(%s, %s, false)", (f"rain.{name}", str(value)))
+    conn.execute((SQL_DIR / "forecast_summary.sql").read_text(encoding="utf-8"))
+    return conn
 
 
 def build_forecast(con, now: datetime) -> dict:
@@ -102,11 +104,9 @@ def build_forecast(con, now: datetime) -> dict:
 
 def main() -> int:
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    if not any(SNAPSHOT_DIR.glob("*/*/*.parquet")):
-        print(f"No snapshots found in {SNAPSHOT_DIR}. Run `python -m src.ingest` first.", file=sys.stderr)
-        return 1
-    con = run_sql(now=now)
-    forecast = build_forecast(con, now)
+    with connect() as conn:
+        run_sql(conn, now)
+        forecast = build_forecast(conn, now)
     BUILD_DIR.mkdir(exist_ok=True)
     out = BUILD_DIR / "forecast.json"
     out.write_text(json.dumps(forecast, ensure_ascii=False, indent=1), encoding="utf-8")

@@ -27,7 +27,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 
-from src.common import CACHE_DIR, SNAPSHOT_DIR, load_locations
+from src.common import BUILD_DIR, CACHE_DIR, SNAPSHOT_DIR, load_locations
 from src.parsers import met_updated_at, parse_met_no, parse_open_meteo
 
 log = logging.getLogger("ingest")
@@ -211,6 +211,12 @@ def main() -> int:
     sources = SOURCES if args.source == "all" else (args.source,)
     results = run(sources, args.location)
     print(json.dumps(results, indent=2))
+    # load_db records this in the database's run log (rain.ingest_runs).
+    BUILD_DIR.mkdir(exist_ok=True)
+    (BUILD_DIR / "ingest_result.json").write_text(
+        json.dumps({"recorded_at": datetime.now(timezone.utc).isoformat(), "sources": results}, indent=1),
+        encoding="utf-8",
+    )
     return 0
 
 

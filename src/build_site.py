@@ -16,7 +16,7 @@ import sys
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from src.common import BUILD_DIR, SITE_DIR, WEB_DIR, slugify
+from src.common import BUILD_DIR, SITE_DIR, WEB_DIR, load_settings, slugify
 
 PRAGUE = ZoneInfo("Europe/Prague")
 DEFAULT_REPO_URL = "https://github.com/YOUR-USER/YOUR-REPO"
@@ -95,6 +95,7 @@ def build_data(forecast: dict, summaries: dict, carto_key: str = "") -> dict:
         "generated_at": forecast["generated_at"],
         "generated_at_local": generated.astimezone(PRAGUE).strftime("%d %b %Y, %H:%M %Z"),
         "window_hours": forecast["window_hours"],
+        "stale_banner_after_hours": load_settings()["stale_banner_after_hours"],
         # The CARTO basemap key is not secret (it ends up in the page), but it comes from
         # config so it is not hardcoded. Empty = the map falls back to OpenStreetMap tiles.
         "map": {"carto_key": carto_key},

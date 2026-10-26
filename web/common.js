@@ -128,5 +128,17 @@ const RF = (function () {
     return chart;
   }
 
-  return { root, loadData, fmtMm, fmtTemp, fmtTempC, fmtPct, localParts, dateFmt, rainLevel, ICONS, LEVEL_TEXT, drawChart, cssVar };
+  // Warn visitors when the data is old (for example the hourly job stopped). Runs in the browser,
+  // so it works even when no new site is being published.
+  function staleNotice(data) {
+    const el = document.getElementById("stale");
+    if (!el) return;
+    const hours = (Date.now() - new Date(data.generated_at).getTime()) / 3600000;
+    if (hours > data.stale_banner_after_hours) {
+      el.textContent = "This forecast is about " + Math.floor(hours) + " hours old. The hourly update may have stopped, so check the time under 'Last updated'.";
+      el.hidden = false;
+    }
+  }
+
+  return { root, loadData, staleNotice, fmtMm, fmtTemp, fmtTempC, fmtPct, localParts, dateFmt, rainLevel, ICONS, LEVEL_TEXT, drawChart, cssVar };
 })();

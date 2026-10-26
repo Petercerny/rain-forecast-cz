@@ -13,6 +13,15 @@ ollama:
 # Forecast window shown on the site and used for the summaries.
 window_hours: 48
 
-# A source whose newest snapshot is older than this is treated as missing
+# A source whose newest fetch is older than this is treated as missing
 # (so a broken API does not silently show old numbers as if they were fresh).
 stale_after_hours: 6
+
+# The site shows an "outdated" banner when its data is older than this (checked in the visitor's browser,
+# so it still works if the hourly job stops completely).
+stale_banner_after_hours: 6
+
+monitor:
+  # The monitor job fails (and opens a GitHub issue) when a source has no new data for this long.
+  # GitHub's scheduler has skipped ~6 hours at night before, so keep this above that.
+  alert_after_hours: 8

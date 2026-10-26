@@ -31,6 +31,7 @@ and stores is *not* covered by that license. It comes from two third parties, ea
 
 ## Derived data
 
+- The forecast history in the Postgres database is derived from the same two sources and carries the same attribution.
 - The Parquet snapshots on the `data` branch are derived from the two sources above (parsed, time-aligned,
   stored in a different format). They carry the same CC BY 4.0 attribution requirement: if you reuse
   them, credit Open-Meteo.com and MET Norway and indicate that the data was changed.

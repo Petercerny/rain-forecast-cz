@@ -202,3 +202,6 @@ td > div { white-space: nowrap; }
   .mk-val { font-size: 0.625rem; }
   .mk-val b { font-size: 0.6875rem; }
 }
+
+/* outdated-data banner */
+.stale { margin: 12px 0 0; padding: 10px 14px; background: var(--card); border: 2px solid var(--lvl-0); border-radius: 8px; font-size: 0.9375rem; }

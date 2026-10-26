@@ -45,6 +45,7 @@
     if (!loc) { $("summary").textContent = "No forecast data for this place."; return; }
 
     $("updated").textContent = data.generated_at_local + " (Europe/Prague)";
+    RF.staleNotice(data);
     $("summary").textContent = loc.summary.text;
     $("ai-label").hidden = !loc.summary.ai_generated;  // only shown when an LLM wrote the text
 

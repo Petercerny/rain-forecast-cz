@@ -1,6 +1,6 @@
 # rain-forecast-cz
 
-**A small, fully static website with a map of Czechia that shows the rain chance and temperature for the 13 regional capitals over the next 48 hours, putting two free forecasts (Open-Meteo and MET Norway) side by side. Tap a city for a quick view with a short plain-language summary, or open its full page.** An hourly GitHub Actions job fetches both APIs, stores every forecast it ever saw as Parquet, builds the numbers with DuckDB SQL, writes the summaries, and publishes plain HTML to GitHub Pages. There is no server and no per-visitor computation.
+**A small, fully static website with a map of Czechia that shows the rain chance and temperature for the 13 regional capitals over the next 48 hours, putting two free forecasts (Open-Meteo and MET Norway) side by side. Tap a city for a quick view with a short plain-language summary, or open its full page.** An hourly GitHub Actions job fetches both APIs, stores every forecast it ever saw in a Postgres database (Supabase) and as Parquet backup files, builds the numbers with SQL, writes the summaries, and publishes plain HTML to GitHub Pages. Visitors only ever load static files: no server and no per-visitor computation.
 
 It is phase 1 of a personal learning project (Python, SQL, later PySpark). The long-term idea is to keep the forecast history and eventually check which source was right.
 
@@ -18,22 +18,35 @@ It is phase 1 of a personal learning project (Python, SQL, later PySpark). The l
 flowchart LR
     A[Open-Meteo API] --> I
     B[MET Norway API] --> I
-    I["ingest.py<br/>fetch + parse"] --> S[("data/snapshots/<br/>Parquet, append-only<br/>(data branch)")]
-    S --> T["transform.py<br/>DuckDB + sql/forecast_summary.sql"]
-    T --> F[build/forecast.json]
-    F --> M["summarize.py<br/>template or Ollama<br/>+ faithfulness check"]
+    I["ingest.py<br/>fetch + parse"] --> S[("Parquet files<br/>raw log + backup<br/>(data branch)")]
+    S --> L["load_db.py<br/>idempotent, catches up"]
+    L --> D[("Postgres on Supabase<br/>system of record")]
+    D --> T["transform.py<br/>sql/forecast_summary.sql"]
+    T --> M["summarize.py<br/>template or Ollama<br/>+ faithfulness check"]
     M --> W["build_site.py<br/>site/data.json + HTML"]
     W --> P["GitHub Pages<br/>map page + one page per city"]
+    D --> N["monitor job<br/>alerts + GitHub issue"]
 ```
 
 | Step | File | What it does |
 | --- | --- | --- |
 | 1 | `src/ingest.py` (+ `src/parsers.py`) | Calls both APIs for every location in `config/locations.yaml`, parses them to hourly rows, writes a **new** Parquet file per source per run. One failing source or city never stops the run. |
-| 2 | `src/transform.py` + `sql/forecast_summary.sql` | DuckDB picks the newest snapshot per source and city, joins the two sources hour by hour, and computes the 48-hour window, daily totals, wettest hours and the difference between sources. |
+| 1b | `src/load_db.py` | Copies the Parquet files into Postgres (one row per fetch, hourly values in arrays). Safe to repeat, and it re-checks the last 7 days, so a run that could not reach the database is repaired by the next one. |
+| 2 | `src/transform.py` + `sql/forecast_summary.sql` | PostgreSQL picks the newest fetch per source and city, joins the two sources hour by hour, and computes the 48-hour window, daily totals, wettest hours, temperatures and the difference between sources. |
 | 3 | `src/summarize.py` | Writes 2 to 3 sentences per city from the computed facts only. `template` (default) or `ollama` (local LLM). |
 | 4 | `src/build_site.py` + `web/` | Writes `site/data.json`, the map page (`index.html`) and one page per city (`site/<city>/index.html`, rendered from `web/city.html`). Vanilla JS, [Leaflet](https://leafletjs.com/) for the map and Chart.js for the charts, both from a CDN. |
+| 5 | `src/monitor.py` | Separate workflow job: fails (and opens a GitHub issue) when a source has had no new data for too long. |
 
-Snapshot layout, ready for a later job to join against observations:
+**The database** (`db/migrations/001_init.sql`, schema `rain`):
+
+| Table / view | What it holds |
+| --- | --- |
+| `rain.fetches` | One row per source, location and download time. The hourly values are arrays (`precip_mm`, `precip_prob`, `temp_c`) starting at `first_hour`. About 200 MB a year, so the free 500 MB lasts around two years. |
+| `rain.forecast_hours` | A view that unpacks `fetches` to one row per forecast hour. Use this for analysis. |
+| `rain.locations` | Slug, name and coordinates of each place. |
+| `rain.ingest_runs` | A log of every pipeline run: rows loaded, failures, link to the GitHub run. |
+
+**The Parquet files** are the raw, append-only log and the backup:
 
 ```
 data/snapshots/source=open-meteo/date=2026-10-25/part-20261025T175756Z.parquet
@@ -41,11 +54,11 @@ data/snapshots/source=met-no/date=2026-10-25/part-20261025T175756Z.parquet
 data/cache/met_state.json          # MET Norway Expires / Last-Modified bookkeeping
 ```
 
-Each row is one forecast hour as predicted at `fetched_at`: `location, lat, lon, valid_time, hour_start, precip_mm, precip_prob, temp_c, source_updated_at` (the schema is `SCHEMA` in `src/ingest.py`).
+Each row is one forecast hour as predicted at `fetched_at` (the schema is `SCHEMA` in `src/ingest.py`). The Parquet files are written first, so a database outage never loses data.
 
 ## Tech stack
 
-Python 3.11+, [DuckDB](https://duckdb.org/) (SQL), PyArrow (Parquet), requests, PyYAML, pytest, [Leaflet](https://leafletjs.com/) + [CARTO](https://carto.com/basemaps/) map tiles, [Chart.js](https://www.chartjs.org/) (CDNs, pinned versions with SRI hashes), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
+Python 3.11+, PostgreSQL on [Supabase](https://supabase.com/) (free tier) with psycopg 3, PyArrow (Parquet), requests, PyYAML, pytest, [Leaflet](https://leafletjs.com/) + [CARTO](https://carto.com/basemaps/) map tiles, [Chart.js](https://www.chartjs.org/) (CDNs, pinned versions with SRI hashes), GitHub Actions and GitHub Pages. Optional: [Ollama](https://ollama.com/) for local LLM summaries. Dependencies are pinned in `requirements.txt`.
 
 ## Run it locally
 
@@ -53,8 +66,10 @@ Python 3.11+, [DuckDB](https://duckdb.org/) (SQL), PyArrow (Parquet), requests, 
 python -m venv .venv
 source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env                 # then edit USER_AGENT and REPO_URL
+cp .env.example .env                 # then edit USER_AGENT, REPO_URL and the database URLs
 ```
+
+The pipeline needs a Postgres database (see [Set up the database](#set-up-the-database)). Put its connection string in `.env` as `DATABASE_URL`. Use a separate development database while you are experimenting, not the production one.
 
 MET Norway requires a descriptive `User-Agent` of the form `<project-name>/<version> <repo URL>` and blocks anonymous clients. Put yours in `.env` (in CI it comes from a repository variable, see below). The public repo URL is the contact, so no personal email is needed.
 
@@ -63,19 +78,23 @@ Run the steps one at a time:
 ```bash
 python -m src.ingest                                   # fetch everything, write data/snapshots/...
 python -m src.ingest --source met-no --location Praha  # or just one source and one city
-python -m src.transform                                # DuckDB SQL -> build/forecast.json
+python -m src.load_db                                  # Parquet -> Postgres (idempotent)
+python -m src.transform                                # SQL in Postgres -> build/forecast.json
 python -m src.summarize                                # -> build/summaries.json
 python -m src.build_site                               # -> site/
 python -m http.server 8000 --directory site            # open http://localhost:8000
+python -m src.monitor                                  # is fresh data arriving?
 python -m pytest -q                                    # tests
 ```
 
-Look at the snapshots yourself with DuckDB:
+The database tests only run when `TEST_DATABASE_URL` points at a **throwaway** database (they drop and recreate the `rain` schema, and refuse to run against `DATABASE_URL`). Without it they are skipped. In CI a Postgres container is used.
+
+Look at the history yourself, in the Supabase SQL editor or any Postgres client:
 
 ```sql
-SELECT source, location, count(*) AS rows, max(fetched_at) AS last_fetch
-FROM read_parquet('data/snapshots/*/*/*.parquet', hive_partitioning = true)
-GROUP BY ALL;
+SELECT source, location_slug, count(*) AS fetches, max(fetched_at) AS last_fetch
+FROM rain.fetches
+GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
 ### Switch to the Ollama summarizer
@@ -98,28 +117,61 @@ The model name and URL live under `ollama:` in `config/settings.yaml`. The model
    - `USER_AGENT` = `rain-forecast-cz/0.1 https://github.com/<you>/<repo>`
    - `CARTO_KEY` = your free CARTO basemaps key (request one at <https://carto.com/basemaps/apikey/>: just an email, no account). It is visible in the page source like any map key, so restrict it to your `<user>.github.io` domain in CARTO. Without it the map falls back to OpenStreetMap tiles.
    - `REPO_URL` (optional; defaults to the repository's own URL)
-4. **Actions → Update forecast → Run workflow** once. After that it runs hourly at minute 23.
+4. Set up the database (next section) and add the secret `DATABASE_URL`.
+5. **Actions → Update forecast → Run workflow** once. After that it runs hourly at minute 23.
 
-The workflow (`.github/workflows/update-forecast.yml`) runs ingest, transform, summarize (template mode), and build, commits the new snapshots to the `data` branch, and deploys `site/` to Pages.
+The workflow (`.github/workflows/update-forecast.yml`) runs ingest, commits the new Parquet snapshots to the `data` branch, loads them into the database, runs the transform, summarize (template mode) and build steps, and deploys `site/` to Pages. A second job, `monitor`, checks that fresh data keeps arriving.
 
-### Where the data is stored (and the tradeoff)
+### Set up the database
 
-Snapshots are committed to a separate `data` branch, never to `main`. That is free and needs no database, and anyone can clone the branch and query the history with DuckDB. The tradeoff: git is not built for ever-growing binary data. Every run adds a few small files (about 25 KB for 13 cities and 2 sources, so roughly 200 MB per year), and git history keeps all of it forever, so clones get slower over time.
+1. Create a free project at [supabase.com](https://supabase.com/) (pick an EU region, set a strong database password and keep it in a password manager).
+2. **Connect → Session pooler**: copy the connection string (host `aws-…pooler.supabase.com`, port **5432**, user `postgres.<project-ref>`). Use the *session pooler*, not the direct connection: the direct one is IPv6-only on the free plan and GitHub Actions only has IPv4. Add `?sslmode=require`.
+3. Put it in your local `.env` as `ADMIN_DATABASE_URL` (never in GitHub, never committed), then:
 
-When the branch grows large, compact it:
+```bash
+python -m src.db_migrate                         # creates schema, tables, view, security rules
+python -m src.db_migrate --create-pipeline-role  # prints the connection string of a limited `pipeline` role, once
+```
 
-- **Weekly compaction:** merge each completed `source=…/date=…/` folder into a single Parquet file (DuckDB's `COPY (SELECT * FROM read_parquet(...)) TO ... (FORMAT parquet)` does this in one statement), then commit.
-- **Reset the history:** squash the `data` branch to a single commit (`git checkout --orphan`, re-add, force-push). The files stay, the old commits go.
-- **Or move the files out of git** to object storage (S3, R2, Azure Blob) or GitHub Releases, and keep only the pipeline in the repo.
+4. Add that printed string as the GitHub **secret** `DATABASE_URL` (Settings → Secrets and variables → Actions → Secrets). The `pipeline` role can read and add data but cannot change the table structure or delete history. The tables live in a schema that Supabase's public REST API does not expose, and row level security is on.
+5. Load the existing history from the `data` branch. Check it out into a folder *next to* the project (your local `data/` folder may already hold files from test runs), point `DATA_DIR` at it, and fill the database. Run `python -m src.load_db --all` once more without `DATA_DIR` to add your local files too:
+
+```bash
+git fetch origin data
+git worktree add ../rain-forecast-data origin/data
+DATA_DIR=../rain-forecast-data python -m src.load_db --all      # PowerShell: $env:DATA_DIR = "..ain-forecast-data"
+```
+
+The free plan **pauses a project after a week of low activity** and has **no automatic backups**. The hourly writes keep it active (check the Supabase dashboard after a couple of weeks to be sure), and the Parquet files are your backup. A paused project makes the workflow fail loudly while the last published site stays online: unpause it in the dashboard.
+
+### Where the data is stored, backups and restore
+
+- **Postgres (Supabase)** is the system of record: what the site is built from and what you query.
+- **Parquet files on the `data` branch** are the immutable raw log and the **backup**. They are committed *before* anything touches the database.
+- **`site/data.json`** is only the latest result, rebuilt every run. It is not stored anywhere else.
+
+**Restore** into an empty database (a new Supabase project, or after a mistake): check out the `data` branch into `data/`, run `python -m src.db_migrate`, then `python -m src.load_db --all`. Inserts are idempotent, so running it on a partly filled database is safe.
+
+**Growth.** The database grows about 200 MB a year, so the 500 MB free tier lasts around two years. Check it with `SELECT pg_size_pretty(pg_total_relation_size('rain.fetches'));`. The `data` branch grows around 100 MB a year, and git keeps all of it forever. When it gets large:
+
+- **Squash the history:** reduce the `data` branch to a single commit (`git checkout --orphan`, re-add, force-push). The files stay, the old commits go.
+- **Or move the files out of git** to object storage (S3, R2, Azure Blob), and keep only the pipeline in the repo.
+- To shrink the database, move to a paid plan or archive old fetches to Parquet and delete them (the `pipeline` role cannot delete, so do it with the admin connection).
+
+### Monitoring
+
+- Every run writes a row per source to `rain.ingest_runs`.
+- The `monitor` job fails when a source has no new data for `monitor.alert_after_hours` (8 by default, in `config/settings.yaml`), GitHub emails you about the failed run, and the job opens one GitHub issue labelled `data-stale`. The issue closes itself when data flows again. GitHub's scheduler is best effort and has skipped about 6 hours overnight in practice, hence the generous limit.
+- The website shows an "outdated" banner when its data is older than `stale_banner_after_hours` (6). It is checked in the visitor's browser, so it also works when the hourly job has stopped completely (for example disabled by GitHub, see below).
 
 ### GitHub pauses scheduled workflows after 60 days of inactivity
 
-In a public repository GitHub **automatically disables scheduled workflows when there has been no repository activity for 60 days**. Commits made by the workflow itself to the `data` branch may not count, so the site can quietly stop updating. To re-enable: open the **Actions** tab, choose **Update forecast**, and click **Enable workflow** (or make any commit to `main`). Running it manually with **Run workflow** also works.
+In a public repository GitHub **automatically disables scheduled workflows when there has been no repository activity for 60 days**. Commits made by the workflow itself to the `data` branch may not count, so the site can quietly stop updating (the monitor job stops with it, so the banner on the site is the only warning). To re-enable: open the **Actions** tab, choose **Update forecast**, and click **Enable workflow** (or make any commit to `main`). Running it manually with **Run workflow** also works.
 
 ## Data, licenses, and non-commercial use
 
 - Code: MIT, see [`LICENSE`](LICENSE).
-- Data: Open-Meteo and MET Norway, both CC BY 4.0, see [`DATA_LICENSES.md`](DATA_LICENSES.md). The attribution is shown in the site footer and travels with the snapshots on the `data` branch.
+- Data: Open-Meteo and MET Norway, both CC BY 4.0, see [`DATA_LICENSES.md`](DATA_LICENSES.md). The attribution is shown in the site footer and travels with the snapshots on the `data` branch. The database content is derived from the same data, so the same attribution applies to it.
 - **This is a non-commercial project.** The site has no ads, no tracking and no monetization, because Open-Meteo's free tier is for non-commercial use only. Please keep it that way if you fork it (or switch to a paid plan).
 - Map tiles come from CARTO (with an API key, free for non-commercial use up to 5 million requests a month) or OpenStreetMap as the fallback. The map shows the required attribution. Visitors' browsers request tiles from those servers directly, so those servers see their IP addresses.
 - Request volume is tiny: about 13 calls per hour to each weather API, far below Open-Meteo's free limits. For MET Norway the pipeline truncates coordinates to 4 decimals, sends the `User-Agent` from `USER_AGENT`, does not call again before the `Expires` time, and sends `If-Modified-Since`.
@@ -141,4 +193,4 @@ In a public repository GitHub **automatically disables scheduled workflows when 
 
 ### Where to start reading the SQL
 
-Open `sql/forecast_summary.sql` and read it top to bottom: `latest_snapshot` (newest forecast per source), then `hourly` (the FULL OUTER JOIN and the time-window filter), then `daily` and `peak_hours`. `tests/test_transform.py` shows each piece on tiny hand-made data.
+Open `sql/forecast_summary.sql` and read it top to bottom: `latest_snapshot` (newest forecast per source, `DISTINCT ON`), then `hourly` (the FULL OUTER JOIN and the time-window filter), then `daily` and `peak_hours` (a window function). `db/migrations/001_init.sql` explains the table design and the `unnest` view. `tests/test_transform.py` shows each piece on tiny hand-made data (it needs `TEST_DATABASE_URL`).

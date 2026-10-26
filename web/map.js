@@ -168,6 +168,7 @@
       return;
     }
     $("updated").textContent = data.generated_at_local + " (Europe/Prague)";
+    RF.staleNotice(data);
 
     map = L.map("map", { minZoom: 6, maxZoom: 12, zoomSnap: 0.25, maxBounds: L.latLngBounds(CZ_BOUNDS).pad(0.35), maxBoundsViscosity: 0.8 });
     map.fitBounds(CZ_BOUNDS, { padding: [6, 6] });

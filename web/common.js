@@ -88,6 +88,7 @@ const RF = (function () {
     close: ico('<path d="M6 6l12 12M18 6L6 18"/>'),
     plus: ico('<path d="M12 5v14M5 12h14"/>'),
     minus: ico('<path d="M5 12h14"/>'),
+    tilt: ico('<path d="M3.5 9.5L12 5l8.5 4.5L12 14z"/><path d="M3.5 14l8.5 4.5 8.5-4.5"/>'),
     home: ico('<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.8V19h4.2v-5h3.6v5H18V9.8"/>'),
     back: ico('<path d="M15 5l-7 7 7 7"/>'),
     drop: ico('<path d="M12 3.5c3.2 3.9 5.5 6.6 5.5 9.6a5.5 5.5 0 0 1-11 0c0-3 2.3-5.7 5.5-9.6z"/>'),

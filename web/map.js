@@ -9,6 +9,7 @@
   const CZ_BOUNDS = [[12.09, 48.55], [18.87, 51.06]];  // [lng, lat] south-west and north-east corner of Czechia
   const STYLE = "https://tiles.openfreemap.org/styles/positron";
   const isPhone = () => window.innerWidth < 720;
+  const TILT = 35;                      // the map opens tilted by this many degrees
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   // The base map is one style that is re-painted from the "day" palette towards the "night" one (mix 0..1),
@@ -27,7 +28,8 @@
 
   let data = null;
   let map = null;
-  let fxLayer = null;
+  let fxLayer = null;                   // the flat canvas animation: only the fallback when the WebGL weather is unavailable
+  let weather = null;                   // the map-anchored WebGL weather (weather-gl.js)
   let sheetChart = null;
   let currentLoc = null;
   let lastFocus = null;
@@ -192,29 +194,71 @@
     if (!ambient.raf) ambient.raf = requestAnimationFrame(tickAmbient);
   }
 
+  // Where "all of Czechia" is for a given tilt. fitBounds ignores the tilt, so zoom out a little when tilted
+  // (the near edge of a tilted map is more zoomed in than the middle).
+  function homeCamera(pitch) {
+    const cam = map.cameraForBounds(CZ_BOUNDS, { padding: homePadding() });
+    if (!cam) return { center: [15.45, 49.8], zoom: isPhone() ? 5.8 : 6.5, pitch, bearing: 0 };
+    return { center: cam.center, zoom: cam.zoom - (pitch > 5 ? (isPhone() ? 0.25 : 0.35) : 0), pitch, bearing: 0 };
+  }
+
+  // The weather: map-anchored WebGL when possible, otherwise the flat canvas animation.
+  function useCanvasFx() {
+    if (fxLayer) return;
+    weather = null;
+    fxLayer = FX.create($("fx-layer"));
+    fxLayer.setScene(shown);
+  }
+  function attachWeather() {
+    if (weather || fxLayer) return;
+    if (new URLSearchParams(window.location.search).get("fx") === "canvas") { useCanvasFx(); return; }
+    const firstLabel = map.getStyle().layers.find((l) => l.type === "symbol");
+    try {
+      weather = WeatherGL.attach(map, { before: firstLabel && firstLabel.id, onFail: useCanvasFx });
+    } catch (err) {
+      console.warn("Weather layer unavailable:", err);
+    }
+    if (!weather) { useCanvasFx(); return; }
+    RF.weather = weather;  // handy in the browser console (RF.weather.info())
+    weather.setEnabled(RF.fx.get() === "on");
+    pushWeather();
+  }
+  // Hand the scene of every place (and the shown time, light and wind) to the weather.
+  function pushWeather() {
+    if (weather) weather.setScene(data.locations.map((l) => ({ lon: l.lon, lat: l.lat, scene: scenes[l.slug] })), shown);
+    if (fxLayer) fxLayer.setScene(shown);
+  }
+
+  function updateTiltButton() {
+    const b = $("zoom-tilt");
+    if (b) b.setAttribute("aria-pressed", String(map.getPitch() > 5));
+  }
+
   function makeMap() {
     map = new maplibregl.Map({
       container: "map",
       style: STYLE,
-      bounds: CZ_BOUNDS,
-      fitBoundsOptions: { padding: homePadding() },
+      center: [15.45, 49.8],
+      zoom: isPhone() ? 5.8 : 6.5,
+      pitch: TILT,
+      maxPitch: 60,
       minZoom: 5.5,
       maxZoom: 12,
       maxBounds: [[8.2, 46.2], [22.8, 53.4]],
       attributionControl: false,
-      dragRotate: false,
-      pitchWithRotate: false,
       renderWorldCopies: false,
     });
     RF.map = map;  // handy in the browser console
-    map.touchZoomRotate.disableRotation();
+    map.jumpTo(homeCamera(TILT));
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     map.on("style.load", () => {
       tintPlan = planTint();
       addLights();
       applyTint(ambient.mix);
       applyLights(ambient.lights);
+      attachWeather();
     });
+    map.on("pitch", updateTiltButton);
     // The base style references a few icons we do not need; give them an empty image so MapLibre stays quiet.
     map.on("styleimagemissing", (e) => { if (!map.hasImage(e.id)) map.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) }); });
     map.on("click", () => { if ($("sheet").classList.contains("open")) closeSheet(); });
@@ -244,8 +288,10 @@
     ctl.append(
       mk("zoom-in", "plus", "Zoom in", () => map.zoomIn()),
       mk("zoom-out", "minus", "Zoom out", () => map.zoomOut()),
-      mk("zoom-home", "home", "Show all of Czechia", () => map.fitBounds(CZ_BOUNDS, { padding: homePadding(), duration: 900 })),
+      mk("zoom-tilt", "tilt", "Tilt the map", () => map.easeTo({ pitch: map.getPitch() > 5 ? 0 : TILT, duration: 800 })),
+      mk("zoom-home", "home", "Show all of Czechia", () => map.easeTo(Object.assign(homeCamera(TILT), { duration: 1000 }))),
     );
+    updateTiltButton();
   }
 
   // ---------------------------------------------------------------- markers
@@ -490,6 +536,7 @@
       if ($("sheet").classList.contains("open")) closeSheet(); else closeDrawer();
     });
     document.addEventListener("rf:thememode", setAmbientTargets);
+    document.addEventListener("rf:fx", () => { if (weather) weather.setEnabled(RF.fx.get() === "on"); });
   }
 
   // ---------------------------------------------------------------- put the current state on screen
@@ -519,7 +566,7 @@
 
     RF.theme.followSun(shown.night);
     setAmbientTargets();
-    if (fxLayer) fxLayer.setScene(shown);
+    pushWeather();
   }
 
   async function init() {
@@ -540,7 +587,7 @@
     renderTabs();
     renderLegend();
     initSlider();
-    fxLayer = FX.create($("fx-layer"));
+    // (the weather layer is added as soon as the map style has loaded, see attachWeather)
     // Markers do not need the base map, so they appear even while the tiles are still loading.
     scenes = {};
     for (const loc of data.locations) scenes[loc.slug] = sceneFor(loc);

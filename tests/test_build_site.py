@@ -62,6 +62,7 @@ def test_render_site_writes_map_page_city_pages_and_data(tmp_path):
 
     assert (site / "index.html").exists() and (site / "map.js").exists()
     assert (site / "scene.js").exists() and (site / "fx.js").exists()
+    assert (site / "weather-field.js").exists() and (site / "weather-gl.js").exists()
     assert not (site / "city.html").exists()                       # the template is not published
     page = (site / "ceske-budejovice" / "index.html").read_text(encoding="utf-8")
     assert "České Budějovice" in page and "{{" not in page         # all placeholders filled in

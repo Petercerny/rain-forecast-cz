@@ -554,3 +554,6 @@ select option { color: #101c36; background: #fff; }
 .legend li { font-size: 0.78rem; }
 .cond-wide { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 0; }
 @media (max-width: 719px) { .legend { max-width: calc(100vw - 24px); } }
+
+/* the tilt button shows when the map is tilted */
+.map-ctl .tool[aria-pressed="true"] { color: var(--accent); background: var(--surface-soft); }

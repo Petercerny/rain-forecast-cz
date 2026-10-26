@@ -6,7 +6,7 @@ import psycopg
 import pytest
 
 from helpers import H0, NOW, add_fetch, write_parquet
-from src.db_migrate import migrate
+from src.db_migrate import MIGRATIONS_DIR, migrate
 from src.load_db import list_files, load_files, record_run
 
 
@@ -15,8 +15,10 @@ def count(conn, table):
 
 
 def test_migrations_are_applied_once(conn):
-    assert migrate(conn) == []   # the fixture already applied them
-    assert conn.execute("SELECT version FROM rain.schema_migrations").fetchall() == [("001_init.sql",)]
+    assert migrate(conn) == []   # the fixture already applied them all
+    on_disk = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql"))
+    applied = [v for (v,) in conn.execute("SELECT version FROM rain.schema_migrations ORDER BY version")]
+    assert applied == on_disk and len(on_disk) >= 2          # every file recorded exactly once
 
 
 def test_forecast_view_unpacks_arrays_and_skips_gaps(conn):

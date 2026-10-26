@@ -8,11 +8,13 @@
   <!-- Theme and animation switches are applied before the first paint, so there is no flash. -->
   <script>
     (function () {
-      var d = document.documentElement, t, f;
-      try { t = localStorage.getItem("rf-theme"); f = localStorage.getItem("rf-fx"); } catch (e) {}
-      if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      var d = document.documentElement, m, f, t;
+      try { m = localStorage.getItem("rf-theme"); f = localStorage.getItem("rf-fx"); } catch (e) {}
+      if (m !== "light" && m !== "dark") m = "auto";
       if (f !== "on" && f !== "off") f = matchMedia("(prefers-reduced-motion: reduce)").matches ? "off" : "on";
-      d.dataset.theme = t; d.dataset.fx = f;
+      // auto starts from the system setting; the page switches it to the real daylight once the data is loaded
+      t = m === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : m;
+      d.dataset.themeMode = m; d.dataset.theme = t; d.dataset.fx = f;
     })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -34,7 +36,7 @@
   <main>
     <p id="stale" class="stale" role="status" hidden></p>
 
-    <section id="hero" class="hero lvl--1 rise" aria-labelledby="city-h">
+    <section id="hero" class="hero wx-none rise" aria-labelledby="city-h">
       <div id="hero-fx" class="hero-fx" aria-hidden="true"></div>
       <p class="eyebrow">Right now</p>
       <h1 id="city-h">{{CITY_NAME}}</h1>
@@ -48,21 +50,26 @@
       <p class="chips" id="hero-chips"></p>
     </section>
 
-    <section class="card rise" style="--i:1" aria-labelledby="summary-h">
+    <section class="card rise" style="--i:1" aria-labelledby="cond-h">
+      <h2 id="cond-h">Conditions now</h2>
+      <dl class="cond-grid cond-wide" id="cond-grid"></dl>
+    </section>
+
+    <section class="card rise" style="--i:2" aria-labelledby="summary-h">
       <h2 id="summary-h">Summary</h2>
       <p id="summary" class="summary">Loading…</p>
       <p id="ai-label" class="ai-label" hidden>AI-generated summary. It may contain mistakes; the chart is the source of truth.</p>
     </section>
 
-    <section class="card rise" style="--i:2" aria-labelledby="chart-h">
+    <section class="card rise" style="--i:3" aria-labelledby="chart-h">
       <h2 id="chart-h">Hourly rain and temperature</h2>
       <div class="chart-box">
         <canvas id="chart" role="img" aria-label="Chart of hourly rain in millimetres (bars) and temperature in degrees Celsius (lines) from Open-Meteo and MET Norway"></canvas>
       </div>
-      <p class="note">Times are Europe/Prague. Each bar is the rain in the hour starting at that time. Tap a legend entry to show or hide it; "Rain chance" is hidden at first.</p>
+      <p class="note">Times are Europe/Prague. Each bar is the rain in the hour starting at that time. Tap a legend entry to show or hide it; "Rain chance" and "Cloud cover" are hidden at first.</p>
     </section>
 
-    <section class="card rise" style="--i:3" aria-labelledby="daily-h">
+    <section class="card rise" style="--i:4" aria-labelledby="daily-h">
       <h2 id="daily-h">Per day</h2>
       <div id="daily" class="day-grid"></div>
       <p class="note"><span class="dot om"></span> Open-Meteo, <span class="dot met"></span> MET Norway. The first and last days are partial: the window is 48 hours from the last update.</p>
@@ -94,6 +101,7 @@
           integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
           crossorigin="anonymous"></script>
   <script src="../common.js"></script>
+  <script src="../scene.js"></script>
   <script src="../fx.js"></script>
   <script src="../city.js"></script>
 </body>

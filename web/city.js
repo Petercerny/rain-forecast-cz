@@ -109,18 +109,24 @@
     $("summary").textContent = loc.summary.text;
     $("ai-label").hidden = !loc.summary.ai_generated;  // only shown when an LLM wrote the text
 
-    // Hero: the "now" values, a gradient for the weather level, and the animation on top of it.
+    // Hero: the sky right now (real cloud, rain, fog, daylight), as a gradient plus the animation on top of it.
     const now = loc.periods.now;
-    const lvl = RF.rainLevel(now);
-    $("hero").className = "hero rise lvl-" + lvl;
-    $("hero-icon").innerHTML = RF.ICONS[lvl];
+    const scene = Scene.atIndex(loc, 0);
+    $("hero").className = "hero rise " + scene.cls;
+    $("hero-icon").innerHTML = RF.ICONS[scene.icon];
     $("hero-temp").textContent = now ? RF.fmtTemp(now.temp) : "–";
-    $("hero-cond").textContent = RF.LEVEL_SHORT[lvl];
+    $("hero-cond").textContent = scene.label;
     $("hero-chips").innerHTML = now
       ? `<span class="chip">${RF.UI_ICONS.drop} Rain chance ${RF.fmtPct(now.prob)}</span><span class="chip">${RF.fmtTempC(now.temp)}</span>` +
         `<span class="chip">${loc.totals.hours} h forecast</span>`
       : '<span class="chip">No data right now</span>';
-    FX.create($("hero-fx"), { contained: true, onColor: true }).setCondition(lvl);
+    const fx = FX.create($("hero-fx"), { contained: true, onColor: true });
+    fx.setScene(scene);
+    RF.theme.followSun(scene.night);  // auto theme: dark after sunset here
+
+    const date = Scene.pragueDate(Date.parse(loc.hourly[0].t));
+    const sun = (loc.sun || []).find((x) => Scene.pragueDate(Date.parse(x.sunrise)) === date);
+    $("cond-grid").innerHTML = RF.conditionsHtml(scene, { sun: sun ? `${sun.sunrise_local} / ${sun.sunset_local}` : null });
 
     const select = $("location");
     for (const l of data.locations) select.add(new Option(l.name, l.slug));

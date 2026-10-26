@@ -8,10 +8,10 @@ snapshots/source=<open-meteo|met-no>/date=<YYYY-MM-DD>/part-<fetch time>.parquet
 cache/met_state.json     # MET Norway Expires / Last-Modified bookkeeping
 ```
 
-Each Parquet row is one forecast hour as predicted at `fetched_at` (UTC). Read it with DuckDB:
+Each Parquet row is one forecast hour as predicted at `fetched_at` (UTC). From 2026-10-26 the Open-Meteo files also carry cloud cover, day/night, sunshine, weather code, visibility, humidity, wind, gusts and sunrise/sunset (older files and all MET Norway rows have nulls there). Read it with DuckDB (`union_by_name` merges old and new files):
 
 ```sql
-SELECT * FROM read_parquet('snapshots/*/*/*.parquet', hive_partitioning = true);
+SELECT * FROM read_parquet('snapshots/*/*/*.parquet', hive_partitioning = true, union_by_name = true);
 ```
 
 ## Attribution (CC BY 4.0)

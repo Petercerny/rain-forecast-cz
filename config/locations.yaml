@@ -2,44 +2,59 @@
 # The 13 regional capitals of Czechia (Praha is the capital of two regions).
 # Coordinates are city centres (GeoNames-based, cross-checked with the Open-Meteo
 # geocoding API), kept to 4 decimals because MET Norway requires <= 4 decimals.
+# `station` is the nearest ČHMÚ automatic station with temperature and wind (see `python -m src.stations --suggest`);
+# its 10-minute readings drive the "Now" view. Add `rain_station:` only if that station has no rain gauge.
 # Each name also becomes the page address, e.g. "České Budějovice" -> /ceske-budejovice/
 locations:
   - name: Praha
     lat: 50.0880
     lon: 14.4208
+    station: 0-203-0-11514
   - name: Brno
     lat: 49.1952
     lon: 16.6080
+    station: 0-203-0-11721
   - name: Ostrava
     lat: 49.8346
     lon: 18.2820
+    station: 0-203-0-11781
   - name: Plzeň
     lat: 49.7475
     lon: 13.3776
+    station: 0-20000-0-11450
   - name: Liberec
     lat: 50.7671
     lon: 15.0562
+    station: 0-20000-0-11603
   - name: Olomouc
     lat: 49.5955
     lon: 17.2517
+    station: 0-203-0-11742
   - name: České Budějovice
     lat: 48.9744
     lon: 14.4743
+    station: 0-20000-0-11546
   - name: Hradec Králové
     lat: 50.2092
     lon: 15.8327
+    station: 0-203-0-11649
   - name: Pardubice
     lat: 50.0407
     lon: 15.7765
+    station: 0-20000-0-11652
   - name: Ústí nad Labem
     lat: 50.6607
     lon: 14.0322
+    station: 0-20000-0-11502
   - name: Zlín
     lat: 49.2264
     lon: 17.6706
+    station: 0-203-0-11777
   - name: Jihlava
     lat: 49.3961
     lon: 15.5912
+    station: 0-203-0-11662
   - name: Karlovy Vary
     lat: 50.2327
     lon: 12.8712
+    station: 0-20000-0-11414

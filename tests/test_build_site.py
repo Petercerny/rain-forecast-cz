@@ -38,7 +38,7 @@ SUMMARIES = {"České Budějovice": {"text": "Some text.", "ai_generated": False
 
 def test_periods_for_map_markers():
     p = build_periods(LOC, date(2026, 10, 26))
-    assert p["now"] == {"prob": 35, "temp": 7.5, "rain_mm": 0.2}
+    assert p["now"] == {"prob": 35, "temp": 7.5, "rain_mm": 0.2, "source": "forecast"}
     assert p["d0"] == {"prob": 35, "temp": 11.0, "rain_mm": 0.2}
     assert p["d1"] == {"prob": 90, "temp": 9.0, "rain_mm": 4.5}   # larger of the two rain totals
     assert p["d2"] is None                                        # no data for that day

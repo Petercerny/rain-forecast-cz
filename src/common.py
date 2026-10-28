@@ -1,5 +1,4 @@
 """Small helpers shared by all pipeline steps: paths, config loading, env vars."""
-import os
 import re
 import unicodedata
 from pathlib import Path
@@ -10,11 +9,6 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 SQL_DIR = ROOT / "sql"
-
-# Snapshots + cache state live in data/ (a separate git branch in CI, ignored on main).
-DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data"))
-SNAPSHOT_DIR = DATA_DIR / "snapshots"
-CACHE_DIR = DATA_DIR / "cache"
 
 # Intermediate files between pipeline steps (rebuilt every run, not versioned).
 BUILD_DIR = ROOT / "build"

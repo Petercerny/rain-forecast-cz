@@ -557,3 +557,12 @@ select option { color: #101c36; background: #fff; }
 
 /* the tilt button shows when the map is tilted */
 .map-ctl .tool[aria-pressed="true"] { color: var(--accent); background: var(--surface-soft); }
+
+/* "Newer data is available" notice (added by RF.loadData's watcher, see web/common.js). */
+.fresh-notice {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50;
+  padding: 10px 16px; border: 0; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.9rem; color: #fff; background: rgba(20, 30, 50, 0.9);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.fresh-notice:hover { background: rgba(20, 30, 50, 1); }

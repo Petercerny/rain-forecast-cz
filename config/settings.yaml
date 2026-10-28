@@ -21,7 +21,15 @@ stale_after_hours: 6
 # so it still works if the hourly job stops completely).
 stale_banner_after_hours: 6
 
+# A weather-station reading older than this is not shown as "now" (the site falls back to the forecast hour).
+# ČHMÚ rewrites its 10-minute files once an hour, so the newest reading is normally 10 to 70 minutes old.
+observation_stale_minutes: 120
+
+# The ingest job runs every ~10 minutes but asks Open-Meteo for a place at most this often
+# (its models update about hourly). MET Norway is polled by its own `Expires` header instead.
+open_meteo_min_interval_minutes: 55
+
 monitor:
-  # The monitor job fails (and opens a GitHub issue) when a source has no new data for this long.
-  # GitHub's scheduler has skipped ~6 hours at night before, so keep this above that.
-  alert_after_hours: 8
+  # /api/health answers 503 (and the uptime monitor e-mails you) when a source has no new data for this long.
+  # Both sources normally deliver about hourly.
+  alert_after_hours: 3

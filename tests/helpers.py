@@ -5,7 +5,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.db import pack_fetch
-from src.ingest import SCHEMA
+from src.legacy_parquet import SCHEMA
 
 NOW = datetime(2026, 7, 1, 10, 30, tzinfo=timezone.utc)  # summer: Prague = UTC+2
 H0 = datetime(2026, 7, 1, 10, tzinfo=timezone.utc)       # start of the current hour = window start
@@ -47,7 +47,7 @@ def add_fetch(conn, source, fetched_at, name, hours, temps=None, probs=None, slu
 
 
 def write_parquet(folder, source, fetched_at, name, hours, temps=None, probs=None, extras=None, sun=None):
-    """Write one snapshot file like ingest does (folder = the data/snapshots root)."""
+    """Write one old-style snapshot file (see src/legacy_parquet.py); folder = the data/snapshots root."""
     rows = [
         {"fetched_at": fetched_at, "location": name, "lat": 50.0, "lon": 14.0,
          "valid_time": r["hour_start"], "hour_start": r["hour_start"], "source_updated_at": None,

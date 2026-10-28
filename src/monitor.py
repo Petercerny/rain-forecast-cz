@@ -2,9 +2,8 @@
 
     python -m src.monitor
 
-The GitHub workflow runs this in a separate job after every update. When it fails, the job
-opens (or updates) a GitHub issue, and GitHub emails you about the failed run.
-Needs DATABASE_URL.
+The web app serves the same check at /api/health (HTTP 503 when something is wrong), which an
+uptime monitor can poll and e-mail you about. Needs DATABASE_URL.
 """
 import sys
 from datetime import datetime, timezone
@@ -33,14 +32,21 @@ def evaluate(newest: dict, now: datetime, alert_after_hours: float) -> list[str]
     return problems
 
 
+def check(conn, now: datetime | None = None) -> dict:
+    """{"ok", "problems", "newest"}: the freshness check against the database behind `conn`."""
+    now = now or datetime.now(timezone.utc)
+    newest = dict(conn.execute("SELECT source, max(fetched_at) FROM rain.fetches GROUP BY source").fetchall())
+    problems = evaluate(newest, now, load_settings()["monitor"]["alert_after_hours"])
+    return {"ok": not problems, "problems": problems,
+            "newest": {s: newest[s].isoformat() if newest.get(s) else None for s in EXPECTED_SOURCES}}
+
+
 def main() -> int:
-    hours = load_settings()["monitor"]["alert_after_hours"]
-    now = datetime.now(timezone.utc)
     with connect() as conn:
-        newest = dict(conn.execute("SELECT source, max(fetched_at) FROM rain.fetches GROUP BY source").fetchall())
-    for source in EXPECTED_SOURCES:
-        print(f"{source}: newest fetch {newest.get(source)}")
-    problems = evaluate(newest, now, hours)
+        result = check(conn)
+    for source, when in result["newest"].items():
+        print(f"{source}: newest fetch {when}")
+    problems = result["problems"]
     for p in problems:
         print("PROBLEM:", p)
     print("OK" if not problems else f"{len(problems)} problem(s)")

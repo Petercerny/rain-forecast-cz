@@ -242,6 +242,68 @@ const Scene = (function () {
     return finish(s);
   }
 
+  // ---------------------------------------------------------------- measured "now"
+
+  // A weather-station reading older than this is not shown as "now" (the build already drops readings older than
+  // two hours; this covers a page that has been open for a long time).
+  const OBS_MAX_AGE = 150 * 60000;
+
+  // loc.observed (what the nearest station measured) while it is still fresh, else null.
+  function observed(loc) {
+    const o = loc.observed;
+    if (!o || !isNum(o.temp)) return null;
+    const age = Date.now() - Date.parse(o.t);
+    return age <= OBS_MAX_AGE ? o : null;
+  }
+
+  // The numbers a marker shows for "now": the measurement when there is a fresh one (periods.now.source is
+  // "measured"), otherwise the first forecast hour.
+  function nowValues(loc) {
+    const p = loc.periods && loc.periods.now;
+    if (p && p.source === "measured" && observed(loc)) return p;
+    const h = loc.hourly[0];
+    if (!h) return null;
+    const mm = [h.om, h.met].filter(isNum);
+    return { prob: h.prob, temp: h.temp, rain_mm: mm.length ? Math.max(...mm) : null, source: "forecast" };
+  }
+
+  // "Measured 14:40 · Praha, Klementinum" (Prague time), or null when there is no fresh measurement.
+  function measuredLabel(loc) {
+    const o = observed(loc);
+    if (!o) return null;
+    const hh = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(o.t));
+    return "Measured " + hh + " · " + o.station;
+  }
+
+  // The scene right now. Temperature, wind, humidity and rain are what the station measured; the clouds still
+  // come from the forecast hour (stations do not see them), but are made at least as thick as the measured
+  // sunshine allows. Without a fresh measurement this is simply the first forecast hour.
+  function atNow(loc) {
+    const o = observed(loc), h = loc.hourly[0];
+    if (!o || !h) return atIndex(loc, 0);
+    const s = blank();
+    const raining = isNum(o.rain_10m) && o.rain_10m > 0;
+    const f = hasSky(h)
+      ? { code: h.code, cloud: h.cloud, low: h.cloud_l, mid: h.cloud_m, high: h.cloud_h, vis: h.vis }
+      : Object.assign(legacy(h.prob, mmOf(h)), { vis: null });
+    // Dry now: ignore a forecast code for rain or snow (keep fog). Raining now: the code only tells which kind.
+    const code = fromCode(f.code);
+    if (!raining && !(code && code.type === "fog")) f.code = null;
+    f.mm = raining ? o.rain_10m * 6 : 0;      // 10-minute total -> mm per hour
+    if (raining && !f.code) f.code = 61;      // measured rain the forecast did not expect
+    Object.assign(f, { temp: o.temp, prob: h.prob, hum: o.hum, wind: o.wind, gust: o.gust, dir: o.dir });
+    fill(s, f);
+    const ms = Date.now();
+    timing(s, loc, ms, h.day);
+    if (isNum(o.sun_s) && s.daylight > 0.8) {  // measured sunshine of the last 10 minutes, 0..600 s
+      const share = clamp(o.sun_s / 600, 0, 1);
+      s.sunshine = share;
+      s.cloud = Math.max(s.cloud, Math.round(80 * (1 - share)));
+    }
+    s.measured = true;
+    return finish(s);
+  }
+
   // Index of the first hourly entry on local calendar day number k (0 = the day of the first hour), or -1.
   function dayStart(loc, k) {
     if (!loc.hourly.length) return -1;
@@ -310,5 +372,5 @@ const Scene = (function () {
   const regionAt = (locations, i) => region(locations.map((l) => atIndex(l, Math.min(i, l.hourly.length - 1))));
   const regionDay = (locations, k) => region(locations.map((l) => fromDay(l, k)));
 
-  return { atIndex, hourIndex, fromDay, middayIndex, dayStart, region, regionAt, regionDay, daylight, pragueDate, pragueHour, finish, blank };
+  return { atIndex, atNow, nowValues, observed, measuredLabel, hourIndex, fromDay, middayIndex, dayStart, region, regionAt, regionDay, daylight, pragueDate, pragueHour, finish, blank };
 })();

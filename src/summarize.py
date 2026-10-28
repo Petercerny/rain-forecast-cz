@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -28,6 +29,7 @@ log = logging.getLogger("summarize")
 
 DRY_THRESHOLD_MM = 0.1  # below this we call a period "dry"
 SRC_NAMES = {"open_meteo": "Open-Meteo", "met_no": "MET Norway"}
+PRAGUE = ZoneInfo("Europe/Prague")
 
 
 # ============================================================ 1. facts
@@ -85,6 +87,19 @@ def build_facts(loc: dict, today: date) -> dict:
             "time": p["local_time"],
             **{SRC_NAMES[k]: p[f"{k}_mm"] for k in available if p[f"{k}_mm"] is not None},
         }
+    if loc.get("observed"):
+        facts["measured"] = measured_facts(loc["observed"])
+    return facts
+
+
+def measured_facts(obs: dict) -> dict:
+    """What the weather station measured, as facts a summary may mention (the time is Prague-local)."""
+    when = datetime.fromisoformat(obs["t"].replace("Z", "+00:00")).astimezone(PRAGUE)
+    facts = {"station": obs["station"], "time": when.strftime("%H:%M")}
+    for key, name in (("temp_c", "temperature_c"), ("wind_ms", "wind_ms"), ("humidity_pct", "humidity_pct"),
+                      ("precip_1h_mm", "rain_last_hour_mm")):
+        if obs.get(key) is not None:
+            facts[name] = obs[key]
     return facts
 
 
@@ -117,6 +132,16 @@ def template_summary(facts: dict) -> str:
             first += f" (only {src1} data is available right now)."
 
     sentences = [first]
+
+    # A measured sentence goes first: it is what is happening now.
+    m = facts.get("measured")
+    if m and "temperature_c" in m:
+        now = f"Measured at {m['station']} at {m['time']}: {m['temperature_c']} °C"
+        if "wind_ms" in m:
+            now += f", wind {m['wind_ms']} m/s"
+        if m.get("rain_last_hour_mm"):
+            now += f", {m['rain_last_hour_mm']} mm of rain in the last hour"
+        sentences.insert(0, now + ".")
 
     # Sentence 2: the wettest hour.
     peak = facts["peak"]
@@ -164,6 +189,7 @@ Rules:
 - Describe only what the facts show: rain, then temperature (in degrees Celsius). Do not explain causes, do not speculate, do not give advice.
 - Use only numbers that appear in the facts. Do not calculate new numbers. Amounts are in mm.
 - Name the sources (Open-Meteo, MET Norway) when you compare them.
+- If the facts contain `measured`, you may start with one short sentence about it (station, time, temperature).
 - Output only the note, with no heading and no quotation marks.
 
 Facts:

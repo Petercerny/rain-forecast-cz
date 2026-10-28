@@ -1,8 +1,10 @@
-"""Database helpers: connecting, and packing forecast rows into the array columns.
+"""Database helpers: connecting, storing fetches, and packing forecast rows into the array columns.
 
 The database stores one row per fetch with hourly values in arrays (see
 db/migrations/001_init.sql). `pack_fetch` builds those arrays from parsed hourly rows and
 `unpack_fetch` turns them back into rows. Both are plain functions, no database needed.
+`store_fetch` writes one fetch (and its location); `load_http_state` / `save_http_state` keep the
+"do not ask again before" bookkeeping of the polled APIs (migration 003).
 """
 import os
 from datetime import datetime, timedelta
@@ -30,8 +32,10 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 def connect(url: str | None = None, *, autocommit: bool = False) -> psycopg.Connection:
     """Open one connection. Uses $DATABASE_URL unless a URL is given.
 
-    On Supabase use the SESSION POOLER string (port 5432, user "role.project-ref"): the direct
-    connection is IPv6-only on the free plan and GitHub Actions only has IPv4.
+    On Supabase use a POOLER string (user "role.project-ref"), not the direct connection, which is
+    IPv6-only on the free plan (GitHub Actions and Vercel only have IPv4). The session pooler (port
+    5432) behaves like a normal connection; the transaction pooler (port 6543) works too because
+    prepared statements are switched off below.
     """
     url = url or os.environ.get("DATABASE_URL")
     if not url:
@@ -40,9 +44,72 @@ def connect(url: str | None = None, *, autocommit: bool = False) -> psycopg.Conn
     host = conninfo_to_dict(url).get("host", "")
     if "sslmode" not in url and host not in LOCAL_HOSTS:
         kwargs["sslmode"] = "require"  # never fall back to an unencrypted connection to a remote database
-    conn = psycopg.connect(url, autocommit=autocommit, **kwargs)
+    # prepare_threshold=None: no server-side prepared statements, which the transaction pooler cannot keep.
+    conn = psycopg.connect(url, autocommit=autocommit, prepare_threshold=None, **kwargs)
     conn.execute("SET TIME ZONE 'UTC'")  # so timestamps come back as UTC and date_trunc works on UTC hours
     return conn
+
+
+# ---------------------------------------------------------------- writing
+
+# The array columns come from the lists above, so a new column is added in one place.
+_ARRAY_COLUMNS = HOURLY_ARRAYS + DAILY_ARRAYS
+INSERT_FETCH = (
+    "INSERT INTO rain.fetches (source, location_slug, fetched_at, source_updated_at, first_hour, "
+    + ", ".join(_ARRAY_COLUMNS) + ") "
+    "VALUES (%(source)s, %(slug)s, %(fetched_at)s, %(source_updated_at)s, %(first_hour)s, "
+    + ", ".join(f"%({c})s" for c in _ARRAY_COLUMNS) + ") "
+    "ON CONFLICT (source, location_slug, fetched_at) DO NOTHING"
+)
+UPSERT_LOCATION = """
+INSERT INTO rain.locations (slug, name, lat, lon) VALUES (%s, %s, %s, %s)
+ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, lat = EXCLUDED.lat, lon = EXCLUDED.lon
+"""
+
+
+def store_fetch(conn, source: str, loc: dict, slug: str, fetched_at: datetime, source_updated_at, rows: list[dict]) -> None:
+    """Store one parsed forecast (hourly rows) and its location. All or nothing; safe to repeat
+    (the same source, place and fetch time is ignored the second time)."""
+    packed = pack_fetch(rows)
+    with conn.transaction():
+        conn.execute(UPSERT_LOCATION, (slug, loc["name"], loc["lat"], loc["lon"]))
+        conn.execute(INSERT_FETCH, {"source": source, "slug": slug, "fetched_at": fetched_at,
+                                    "source_updated_at": source_updated_at, **packed})
+
+
+def record_run(conn, fetched_at: datetime, source: str, rows: int, failures: int, note: str | None = None) -> None:
+    """One line in rain.ingest_runs: how many hourly rows a run stored and how many places failed."""
+    conn.execute(
+        "INSERT INTO rain.ingest_runs (fetched_at, source, rows_loaded, failures, note) VALUES (%s, %s, %s, %s, %s)",
+        (fetched_at, source, rows, failures, note),
+    )
+
+
+def load_http_state(conn, source: str) -> dict:
+    """{key: {"expires": ISO text, "last_modified": text}} for one source (keys without the "<source>:" prefix)."""
+    cut = len(source) + 1
+    cur = conn.execute("SELECT key, expires, last_modified FROM rain.http_state WHERE key LIKE %s", (source + ":%",))
+    state = {}
+    for key, expires, last_modified in cur:
+        entry = {}
+        if expires is not None:
+            entry["expires"] = expires.isoformat()
+        if last_modified is not None:
+            entry["last_modified"] = last_modified
+        state[key[cut:]] = entry
+    return state
+
+
+def save_http_state(conn, source: str, key: str, entry: dict) -> None:
+    conn.execute(
+        "INSERT INTO rain.http_state (key, expires, last_modified, updated_at) VALUES (%s, %s, %s, now()) "
+        "ON CONFLICT (key) DO UPDATE SET expires = EXCLUDED.expires, last_modified = EXCLUDED.last_modified, "
+        "updated_at = now()",
+        (f"{source}:{key}", entry.get("expires"), entry.get("last_modified")),
+    )
+
+
+# ---------------------------------------------------------------- packing
 
 
 def pack_fetch(rows: list[dict]) -> dict:

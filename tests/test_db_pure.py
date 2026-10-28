@@ -6,7 +6,7 @@ import pytest
 from helpers import H0, hourly_rows, write_parquet
 from src.db import HOUR, pack_fetch, unpack_fetch
 from src.db_migrate import pipeline_url
-from src.load_db import fetches_from_file, list_files
+from src.legacy_parquet import SCHEMA, fetches_from_file, list_files
 from src.monitor import evaluate
 
 
@@ -41,7 +41,7 @@ def test_pack_rejects_a_half_hour_and_an_empty_fetch():
         pack_fetch([])
 
 
-# ---- reading Parquet files for load_db
+# ---- reading old Parquet snapshot files (src/legacy_parquet.py)
 
 def test_list_files_and_fetches_from_file(tmp_path):
     fetched = datetime(2026, 7, 1, 9, 15, 30, tzinfo=timezone.utc)
@@ -98,7 +98,7 @@ def test_pipeline_url_on_a_plain_postgres_server():
 # ---- the sky, light and wind arrays
 
 from src.db import DAILY_ARRAYS, HOURLY_ARRAYS, OPTIONAL_ARRAYS  # noqa: E402
-from src.ingest import SCHEMA, fetch_open_meteo  # noqa: E402
+from src.ingest import fetch_open_meteo  # noqa: E402
 
 
 def test_pack_stores_optional_arrays_and_aligns_gaps():

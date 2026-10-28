@@ -8,8 +8,12 @@
 --   rain.now_utc            "now" as a timestamp (a setting, so tests can pretend it is another time)
 --   rain.window_hours       length of the forecast window, normally 48
 --   rain.stale_after_hours  ignore a source whose newest fetch is older than this
+--   rain.observation_stale_minutes  ignore a station reading older than this
 --
--- The script builds six TEMP tables, in this order. Each step reads the one before:
+-- It also reads the TEMP table location_stations(location, station_wsi, rain_station_wsi), which
+-- src/transform.py fills from config/locations.yaml before running this file.
+--
+-- The script builds seven TEMP tables, in this order. Each step reads the one before:
 --
 --   latest_snapshot   newest forecast per (source, location)          <- start reading here
 --   hourly            one row per location and hour, both sources side by side
@@ -17,6 +21,7 @@
 --   peak_hours        the wettest hours per location
 --   location_totals   one row per location: window totals + data freshness
 --   sun_times         sunrise and sunset per location and day (Open-Meteo)
+--   latest_obs        the newest MEASURED reading per location (ČHMÚ stations, see 004_observations.sql)
 --
 -- Vocabulary:  om  = Open-Meteo,  met = MET Norway,  mm = millimetres of precipitation
 --
@@ -33,7 +38,7 @@
 SET TIME ZONE 'UTC';
 
 -- Re-running the script in the same session must start clean.
-DROP TABLE IF EXISTS latest_snapshot, hourly, daily, peak_hours, location_totals, sun_times;
+DROP TABLE IF EXISTS latest_snapshot, hourly, daily, peak_hours, location_totals, sun_times, latest_obs;
 
 
 -- -------------------------------------------------------------------------------------
@@ -267,3 +272,65 @@ FROM (
 JOIN rain.locations AS l ON l.slug = f.location_slug
 CROSS JOIN LATERAL unnest(f.sunrise, f.sunset) AS t (sunrise, sunset)
 ORDER BY l.name, t.sunrise;
+
+
+-- -------------------------------------------------------------------------------------
+-- 7. latest_obs
+--    What the weather stations measured most recently, one row per location (none when the
+--    location has no station, or the station reported nothing newer than the stale limit).
+--    The main station (temperature, wind, humidity, sunshine) is the newest reading that has a
+--    temperature. Rain comes from the rain station when the location has one (`rain_station`),
+--    else from the main station: the newest rain reading, and the sum over the hour up to it
+--    (six 10-minute readings). ČHMÚ rewrites its files hourly, so the newest reading is normally
+--    10 to 70 minutes old; the stale limit (settings.yaml) must stay above that.
+--    Values are cast to numeric so they round like decimals instead of showing float noise.
+-- -------------------------------------------------------------------------------------
+CREATE TEMP TABLE latest_obs AS
+WITH main AS (
+    SELECT DISTINCT ON (ls.location)
+           ls.location, ls.station_wsi, ls.rain_station_wsi, o.observed_at,
+           o.temp_c, o.humidity_pct, o.pressure_hpa, o.wind_ms, o.gust_ms, o.wind_dir_deg, o.sunshine_s
+    FROM location_stations AS ls
+    JOIN rain.observations AS o ON o.station_wsi = ls.station_wsi
+    WHERE o.temp_c IS NOT NULL
+      AND o.observed_at <= current_setting('rain.now_utc')::timestamptz
+      AND o.observed_at >= current_setting('rain.now_utc')::timestamptz
+                           - make_interval(mins => current_setting('rain.observation_stale_minutes')::int)
+    ORDER BY ls.location, o.observed_at DESC
+),
+rain AS (
+    SELECT DISTINCT ON (m.location)
+           m.location, o.station_wsi AS rain_wsi, o.observed_at AS rain_at, o.precip_10m_mm
+    FROM main AS m
+    JOIN rain.observations AS o ON o.station_wsi = coalesce(m.rain_station_wsi, m.station_wsi)
+    WHERE o.precip_10m_mm IS NOT NULL
+      AND o.observed_at <= current_setting('rain.now_utc')::timestamptz
+      AND o.observed_at >= current_setting('rain.now_utc')::timestamptz
+                           - make_interval(mins => current_setting('rain.observation_stale_minutes')::int)
+    ORDER BY m.location, o.observed_at DESC
+)
+SELECT
+    m.location,
+    m.station_wsi,
+    s.name                         AS station_name,
+    m.observed_at,
+    m.temp_c::numeric              AS temp_c,
+    m.humidity_pct::numeric        AS humidity_pct,
+    m.pressure_hpa::numeric        AS pressure_hpa,
+    m.wind_ms::numeric             AS wind_ms,
+    m.gust_ms::numeric             AS gust_ms,
+    m.wind_dir_deg,
+    m.sunshine_s::numeric          AS sunshine_s,
+    r.precip_10m_mm::numeric       AS precip_10m_mm,
+    (SELECT round(sum(o.precip_10m_mm)::numeric, 1)
+       FROM rain.observations AS o
+      WHERE o.station_wsi = r.rain_wsi
+        AND o.observed_at >  r.rain_at - interval '60 minutes'
+        AND o.observed_at <= r.rain_at)                          AS precip_1h_mm,
+    r.rain_at                      AS rain_observed_at,
+    CASE WHEN r.rain_wsi <> m.station_wsi THEN rs.name END       AS rain_station_name
+FROM main AS m
+JOIN rain.stations AS s ON s.wsi = m.station_wsi
+LEFT JOIN rain AS r ON r.location = m.location
+LEFT JOIN rain.stations AS rs ON rs.wsi = r.rain_wsi
+ORDER BY m.location;

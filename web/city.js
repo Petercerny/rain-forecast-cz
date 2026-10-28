@@ -110,16 +110,19 @@
     $("ai-label").hidden = !loc.summary.ai_generated;  // only shown when an LLM wrote the text
 
     // Hero: the sky right now (real cloud, rain, fog, daylight), as a gradient plus the animation on top of it.
-    const now = loc.periods.now;
-    const scene = Scene.atIndex(loc, 0);
+    const now = Scene.nowValues(loc);   // the weather station's measurement while it is fresh, else the forecast hour
+    const measured = now && now.source === "measured" ? Scene.measuredLabel(loc) : null;
+    const scene = Scene.atNow(loc);
     $("hero").className = "hero rise " + scene.cls;
     $("hero-icon").innerHTML = RF.ICONS[scene.icon];
     $("hero-temp").textContent = now ? RF.fmtTemp(now.temp) : "–";
     $("hero-cond").textContent = scene.label;
     $("hero-chips").innerHTML = now
       ? `<span class="chip">${RF.UI_ICONS.drop} Rain chance ${RF.fmtPct(now.prob)}</span><span class="chip">${RF.fmtTempC(now.temp)}</span>` +
-        `<span class="chip">${loc.totals.hours} h forecast</span>`
+        (measured ? `<span class="chip"></span>` : "") + `<span class="chip">${loc.totals.hours} h forecast</span>`
       : '<span class="chip">No data right now</span>';
+    const chip = measured && $("hero-chips").querySelector(".chip:nth-child(3)");
+    if (chip) chip.textContent = measured;   // textContent: the station name is data, not markup
     const fx = FX.create($("hero-fx"), { contained: true, onColor: true });
     fx.setScene(scene);
     RF.theme.followSun(scene.night);  // auto theme: dark after sunset here

@@ -29,16 +29,41 @@ def _rows(conn, table: str) -> list[dict]:
         return [{k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()} for row in cur]
 
 
-def run_sql(conn, now: datetime | None = None):
-    """Execute the SQL file on this connection. The result tables are TEMP tables of the session."""
+def run_sql(conn, now: datetime | None = None, locations: list[dict] | None = None):
+    """Execute the SQL file on this connection. The result tables are TEMP tables of the session.
+
+    `locations` (default: config/locations.yaml) tells the SQL which weather station belongs to which city.
+    """
     settings = load_settings()
     now = now or datetime.now(timezone.utc)
     # Settings are read inside the SQL with current_setting('rain.name').
     for name, value in (("now_utc", now.isoformat()), ("window_hours", settings["window_hours"]),
-                        ("stale_after_hours", settings["stale_after_hours"])):
+                        ("stale_after_hours", settings["stale_after_hours"]),
+                        ("observation_stale_minutes", settings.get("observation_stale_minutes", 120))):
         conn.execute("SELECT set_config(%s, %s, false)", (f"rain.{name}", str(value)))
+    # location -> station, from the config (the database does not know which station serves which city).
+    conn.execute("DROP TABLE IF EXISTS location_stations")
+    conn.execute("CREATE TEMP TABLE location_stations (location text PRIMARY KEY, station_wsi text, rain_station_wsi text)")
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO location_stations VALUES (%s, %s, %s)",
+            [(l["name"], l["station"], l.get("rain_station"))
+             for l in (locations if locations is not None else load_locations()) if l.get("station")])
     conn.execute((SQL_DIR / "forecast_summary.sql").read_text(encoding="utf-8"))
     return conn
+
+
+def _observed(r: dict | None) -> dict | None:
+    """One latest_obs row -> the `observed` object of a location (None = no fresh measurement)."""
+    if r is None:
+        return None
+    return {
+        "t": _iso(r["observed_at"]), "station": r["station_name"], "station_wsi": r["station_wsi"],
+        "temp_c": r["temp_c"], "humidity_pct": r["humidity_pct"], "pressure_hpa": r["pressure_hpa"],
+        "wind_ms": r["wind_ms"], "gust_ms": r["gust_ms"], "wind_dir_deg": r["wind_dir_deg"],
+        "sunshine_s": r["sunshine_s"], "precip_10m_mm": r["precip_10m_mm"], "precip_1h_mm": r["precip_1h_mm"],
+        "rain_t": _iso(r["rain_observed_at"]), "rain_station": r["rain_station_name"],
+    }
 
 
 def build_forecast(con, now: datetime) -> dict:
@@ -47,6 +72,7 @@ def build_forecast(con, now: datetime) -> dict:
     daily = _rows(con, "daily")
     peaks = _rows(con, "peak_hours")
     sun_times = _rows(con, "sun_times")
+    observed = {r["location"]: r for r in _rows(con, "latest_obs")}
     totals = {r["location"]: r for r in _rows(con, "location_totals")}
 
     locations = []
@@ -59,6 +85,7 @@ def build_forecast(con, now: datetime) -> dict:
                 "lat": loc["lat"],
                 "lon": loc["lon"],
                 "has_data": t is not None,
+                "observed": _observed(observed.get(name)),   # what the weather station measured last
                 "totals": None if t is None else {
                     "hours": t["hours"],
                     "open_meteo_mm": t["om_total_mm"],

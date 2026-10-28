@@ -14,10 +14,53 @@ const RF = (function () {
   // "" on the map page, "../" on a city page (set with data-root on <body>).
   const root = document.body.dataset.root || "";
 
-  async function loadData() {
-    const resp = await fetch(root + "data.json", { cache: "no-cache" });
+  async function getJson(url) {
+    const resp = await fetch(url, { cache: "no-cache" });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     return resp.json();
+  }
+
+  // The numbers come from the app (/api/data, cached by the CDN for a few minutes). A static preview with
+  // no app (python -m http.server on a site built with --with-data) falls back to data.json next to the page.
+  const REFRESH_MS = 5 * 60 * 1000;
+  async function loadData() {
+    let data;
+    try {
+      data = await getJson(root + "api/data");
+    } catch (err) {
+      data = await getJson(root + "data.json");
+    }
+    watchForNewData(data);
+    return data;
+  }
+
+  // Check for newer data every few minutes while the tab is open and visible. A running page is not
+  // redrawn behind the visitor's back (that would reset the slider and open panels); a small notice offers it.
+  let watching = false;
+  function watchForNewData(first) {
+    if (watching) return;
+    watching = true;
+    let timer = null;
+    async function check() {
+      if (document.hidden) return;
+      try {
+        const next = await getJson(root + "api/data");
+        if (next.generated_at !== first.generated_at) showFresh();
+      } catch (err) { /* offline or the app is down: try again later */ }
+    }
+    function showFresh() {
+      if (document.getElementById("fresh")) return;
+      const btn = document.createElement("button");
+      btn.id = "fresh";
+      btn.type = "button";
+      btn.className = "fresh-notice";
+      btn.textContent = "Newer data is available. Tap to refresh.";
+      btn.addEventListener("click", () => window.location.reload());
+      document.body.appendChild(btn);
+      clearInterval(timer);
+    }
+    timer = setInterval(check, REFRESH_MS);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
   }
 
   // ---------------------------------------------------------------- formatting
@@ -342,7 +385,7 @@ const RF = (function () {
     if (!el) return;
     const hours = (Date.now() - new Date(data.generated_at).getTime()) / 3600000;
     if (hours > data.stale_banner_after_hours) {
-      el.textContent = "This forecast is about " + Math.floor(hours) + " hours old. The hourly update may have stopped, so check the time under 'Last updated'.";
+      el.textContent = "This forecast is about " + Math.floor(hours) + " hours old. The updates may have stopped, so check the time under 'Last updated'.";
       el.hidden = false;
     }
   }

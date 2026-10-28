@@ -1,7 +1,7 @@
 # Data licenses and attribution
 
 The **code** in this repository is MIT licensed (see `LICENSE`). The **weather data** it fetches, displays,
-and stores is *not* covered by that license. It comes from two third parties, each under CC BY 4.0.
+and stores is *not* covered by that license. It comes from three third parties. Open-Meteo and MET Norway are under CC BY 4.0; ČHMÚ is credited as its open-data terms ask (see below).
 
 ## Open-Meteo
 
@@ -20,6 +20,22 @@ and stores is *not* covered by that license. It comes from two third parties, ea
 - The data is reformatted and summarised here; this project is not endorsed by MET Norway.
   It is not affiliated with Yr or NRK.
 
+## ČHMÚ (Czech Hydrometeorological Institute)
+
+- Source: <https://opendata.chmi.cz/> (open data of the Czech Hydrometeorological Institute, ČHMÚ)
+  - 10-minute readings of the automatic weather stations: `meteorology/climate/now/data/10m-<station>-<date>.json`
+    (temperature, humidity, pressure, wind, gusts, rain, sunshine). They are shown as the measured "Now" values
+    and stored in the database (`rain.observations`).
+  - Rain radar composite (maximum reflectivity, PNG): `meteorology/weather/radar/composite/maxz/png_masked/`.
+    The site fetches the frames through its own server (ČHMÚ's server does not allow browsers to load them directly)
+    and draws them on the map. Radar frames are not stored.
+- Attribution: **Measurements and radar: Czech Hydrometeorological Institute (ČHMÚ), opendata.chmi.cz**
+- Terms: this project follows ČHMÚ's published conditions for its freely available data: the source is named, the data
+  is used as published, and it is **not used for warnings or crisis management** (the radar is a convenience, not an
+  official warning). The ČHMÚ pages for the open data do not name a standard licence such as CC BY, so check
+  <https://opendata.chmi.cz/> and <https://www.chmi.cz/> for the current terms before reusing the data
+  (including the copies in the database) in anything other than a non-commercial project like this one.
+
 ## Map tiles and libraries (not weather data)
 
 - Map tiles: vector tiles served by [OpenFreeMap](https://openfreemap.org/), a free service that needs no key.
@@ -31,7 +47,8 @@ and stores is *not* covered by that license. It comes from two third parties, ea
 
 ## Derived data
 
-- The forecast history in the Postgres database is derived from the same two sources and carries the same attribution.
+- The forecast history in the Postgres database is derived from Open-Meteo and MET Norway and carries their attribution.
+  The station readings in the same database (`rain.observations`) come from ČHMÚ and carry its attribution.
 - The Parquet snapshots on the `data` branch are derived from the two sources above (parsed, time-aligned,
   stored in a different format). They carry the same CC BY 4.0 attribution requirement: if you reuse
   them, credit Open-Meteo.com and MET Norway and indicate that the data was changed.

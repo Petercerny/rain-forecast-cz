@@ -1,13 +1,14 @@
 """Tests against a real Postgres (TEST_DATABASE_URL), see tests/conftest.py."""
-import json
 from datetime import datetime, timedelta, timezone
 
 import psycopg
 import pytest
 
-from helpers import H0, NOW, add_fetch, write_parquet
+from helpers import H0, NOW, add_fetch, hourly_rows, write_parquet
 from src.db_migrate import MIGRATIONS_DIR, migrate
-from src.load_db import list_files, load_files, record_run
+from src import ingest
+from src.db import load_http_state, record_run, save_http_state, store_fetch
+from src.legacy_parquet import fetches_from_file, list_files
 
 
 def count(conn, table):
@@ -43,38 +44,87 @@ def test_arrays_of_different_length_are_rejected(conn):
             "VALUES ('met-no', 'praha', %s, %s, '{1,2}', '{NULL}', '{5,6}')", (NOW, H0))
 
 
-def test_load_db_is_idempotent_and_catches_up(tmp_path, conn):
-    t1, t2 = NOW - timedelta(hours=2), NOW - timedelta(hours=1)
-    write_parquet(tmp_path, "open-meteo", t1, "Praha", {0: 1.0, 1: 2.0})
-    write_parquet(tmp_path, "met-no", t1, "Praha", {0: 0.5, 1: 1.5})
+LOC = {"name": "Praha", "lat": 50.088, "lon": 14.4208}
 
-    first = load_files(conn, list_files(tmp_path))
-    assert first == {"files": 2, "fetches": 2}
-    assert load_files(conn, list_files(tmp_path)) == {"files": 0, "fetches": 0}   # nothing twice
 
-    write_parquet(tmp_path, "open-meteo", t2, "Praha", {0: 3.0})                   # a new run appears
-    assert load_files(conn, list_files(tmp_path)) == {"files": 1, "fetches": 1}
-    assert count(conn, "rain.fetches") == 3
+def test_store_fetch_is_all_or_nothing_and_idempotent(conn):
+    rows = hourly_rows({0: 1.0, 1: 2.0}, probs={0: 30, 1: 60})
+    store_fetch(conn, "open-meteo", LOC, "praha", NOW, None, rows)
+    store_fetch(conn, "open-meteo", LOC, "praha", NOW, None, rows)           # the same fetch again: ignored
+    assert count(conn, "rain.fetches") == 1
     assert conn.execute("SELECT slug, name FROM rain.locations").fetchall() == [("praha", "Praha")]
+    got = conn.execute("SELECT hour_start, precip_mm, precip_prob FROM rain.forecast_hours ORDER BY hour_start").fetchall()
+    assert got == [(H0, 1.0, 30), (H0 + timedelta(hours=1), 2.0, 60)]
 
 
-def test_restore_from_parquet_reproduces_the_forecast_rows(tmp_path, conn):
+def test_http_state_round_trips_and_is_separate_per_source(conn):
+    save_http_state(conn, "met-no", "50.0880,14.4208", {"expires": "2026-07-01T11:00:00+00:00", "last_modified": "Wed, 01 Jul 2026 10:00:00 GMT"})
+    save_http_state(conn, "met-no", "50.0880,14.4208", {"expires": "2026-07-01T12:00:00+00:00"})   # replaced, not duplicated
+    save_http_state(conn, "open-meteo", "praha", {"expires": "2026-07-01T10:55:00+00:00"})
+    assert load_http_state(conn, "met-no") == {"50.0880,14.4208": {"expires": "2026-07-01T12:00:00+00:00"}}
+    assert list(load_http_state(conn, "open-meteo")) == ["praha"]
+
+
+def test_record_run_writes_one_line_per_source(conn):
+    record_run(conn, NOW, "open-meteo", 936, 0, "vercel")
+    record_run(conn, NOW, "met-no", 700, 2)
+    rows = conn.execute("SELECT source, rows_loaded, failures, note FROM rain.ingest_runs ORDER BY source").fetchall()
+    assert rows == [("met-no", 700, 2, None), ("open-meteo", 936, 0, "vercel")]
+
+
+def test_ingest_run_stores_skips_what_is_not_due_and_logs(conn, monkeypatch):
+    monkeypatch.setattr("src.ingest.load_locations", lambda: [LOC])
+    monkeypatch.setattr("src.ingest.fetch_open_meteo", lambda loc: {"hourly": {
+        "time": ["2026-07-01T11:00"], "precipitation": [0.4], "precipitation_probability": [20], "temperature_2m": [15.0]}})
+    monkeypatch.setattr("src.ingest.time.sleep", lambda s: None)
+    monkeypatch.setenv("USER_AGENT", "test/0.1 https://example.test")
+
+    class Reply:
+        status_code, headers = 304, {}
+        def raise_for_status(self): pass
+    monkeypatch.setattr("src.ingest.requests.get", lambda *a, **k: Reply())
+
+    first = ingest.run(conn, sources=("open-meteo",), now=NOW)
+    assert first["open-meteo"] == {"stored": 1, "skipped": 0, "failures": 0, "rows": 1}
+    second = ingest.run(conn, sources=("open-meteo",), now=NOW + timedelta(minutes=10))    # inside the 55 minutes
+    assert second["open-meteo"] == {"stored": 0, "skipped": 1, "failures": 0, "rows": 0}
+    third = ingest.run(conn, sources=("open-meteo",), now=NOW + timedelta(minutes=56))
+    assert third["open-meteo"]["stored"] == 1
+    assert count(conn, "rain.fetches") == 2
+    assert count(conn, "rain.ingest_runs") == 2                                            # the all-skipped run is not logged
+
+    met = ingest.run(conn, sources=("met-no",), now=NOW)                                   # 304 -> nothing new, no failure
+    assert met["met-no"] == {"stored": 0, "skipped": 1, "failures": 0, "rows": 0}
+
+
+def test_ingest_run_counts_a_failing_place_and_keeps_going(conn, monkeypatch):
+    other = {"name": "Brno", "lat": 49.1952, "lon": 16.608}
+    monkeypatch.setattr("src.ingest.load_locations", lambda: [LOC, other])
+
+    def fetch(loc):
+        if loc["name"] == "Praha":
+            raise RuntimeError("API down")
+        return {"hourly": {"time": ["2026-07-01T11:00"], "precipitation": [0.0],
+                           "precipitation_probability": [0], "temperature_2m": [15.0]}}
+    monkeypatch.setattr("src.ingest.fetch_open_meteo", fetch)
+    result = ingest.run(conn, sources=("open-meteo",), now=NOW)
+    assert result["open-meteo"] == {"stored": 1, "skipped": 0, "failures": 1, "rows": 1}
+    assert [r[0] for r in conn.execute("SELECT location_slug FROM rain.fetches")] == ["brno"]
+    # The failed place is not marked as fetched, so the next call tries it again.
+    assert list(load_http_state(conn, "open-meteo")) == ["brno"]
+
+
+def test_old_parquet_snapshots_can_still_be_read_and_stored(tmp_path, conn):
     write_parquet(tmp_path, "open-meteo", NOW, "Brno", {0: 1.0, 1: 2.0, 2: 0.0}, temps={0: 5.0, 1: 6.0, 2: 7.0})
-    load_files(conn, list_files(tmp_path))
+    for f in list_files(tmp_path):
+        fetches, locations = fetches_from_file(f["path"], f["source"])
+        conn.execute("INSERT INTO rain.locations (slug, name, lat, lon) VALUES (%s, %s, %s, %s)", locations[0])
+        conn.execute(
+            "INSERT INTO rain.fetches (source, location_slug, fetched_at, first_hour, precip_mm, precip_prob, temp_c) "
+            "VALUES (%(source)s, %(slug)s, %(fetched_at)s, %(first_hour)s, %(precip_mm)s, %(precip_prob)s, %(temp_c)s)",
+            fetches[0])
     rows = conn.execute("SELECT hour_start, precip_mm, temp_c FROM rain.forecast_hours ORDER BY hour_start").fetchall()
     assert rows == [(H0, 1.0, 5.0), (H0 + timedelta(hours=1), 2.0, 6.0), (H0 + timedelta(hours=2), 0.0, 7.0)]
-
-
-def test_record_run_copies_the_ingest_result_into_the_run_log(tmp_path, conn):
-    result = tmp_path / "ingest_result.json"
-    result.write_text(json.dumps({
-        "recorded_at": datetime(2026, 7, 1, 10, tzinfo=timezone.utc).isoformat(),
-        "sources": {"open-meteo": {"rows": 936, "failures": 0, "file": "x"},
-                    "met-no": {"rows": 700, "failures": 2, "file": None}},
-    }), encoding="utf-8")
-    assert record_run(conn, result) == 2
-    rows = conn.execute("SELECT source, rows_loaded, failures FROM rain.ingest_runs ORDER BY source").fetchall()
-    assert rows == [("met-no", 700, 2), ("open-meteo", 936, 0)]
 
 
 def test_pipeline_role_can_read_but_not_change_the_structure_or_delete_history(conn):
@@ -116,21 +166,16 @@ def test_an_extra_array_of_the_wrong_length_is_rejected(conn):
             "VALUES ('open-meteo', 'praha', %s, %s, '{1,2}', '{NULL,NULL}', '{5,6}', '{50}')", (NOW + timedelta(hours=1), H0))
 
 
-def test_load_db_loads_the_new_columns_from_parquet_and_old_files_without_them(tmp_path, conn):
-    from datetime import datetime, timezone
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+def test_store_fetch_keeps_the_new_columns_and_leaves_them_null_for_met(conn):
     sun = (datetime(2026, 7, 1, 3, 15, tzinfo=timezone.utc), datetime(2026, 7, 1, 19, 45, tzinfo=timezone.utc))
-    write_parquet(tmp_path, "open-meteo", NOW - timedelta(hours=1), "Praha", {0: 0.0, 1: 0.5},
-                  extras={"cloud_pct": {0: 30, 1: 80}, "visibility_m": {0: 20000, 1: 9000}}, sun=sun)
-    # An OLD file: written before the new columns existed (a table without them).
-    old = write_parquet(tmp_path, "met-no", NOW - timedelta(hours=1), "Praha", {0: 1.0})
-    keep = ["fetched_at", "location", "lat", "lon", "valid_time", "hour_start", "precip_mm", "precip_prob", "temp_c",
-            "source_updated_at"]
-    pq.write_table(pq.read_table(old).select(keep), old)
-
-    assert load_files(conn, list_files(tmp_path)) == {"files": 2, "fetches": 2}
+    store_fetch(conn, "open-meteo", LOC, "praha", NOW - timedelta(hours=1), None,
+                hourly_rows({0: 0.0, 1: 0.5}, extras={"cloud_pct": {0: 30, 1: 80}, "visibility_m": {0: 20000, 1: 9000}}, sun=sun))
+    store_fetch(conn, "met-no", LOC, "praha", NOW - timedelta(hours=1), None, hourly_rows({0: 1.0}))
     row = conn.execute("SELECT cloud_pct, visibility_m, sunrise, sunset FROM rain.fetches WHERE source = 'open-meteo'").fetchone()
     assert row == ([30, 80], [20000, 9000], [sun[0]], [sun[1]])
-    row = conn.execute("SELECT cloud_pct, sunrise FROM rain.fetches WHERE source = 'met-no'").fetchone()
-    assert row == (None, None)
+    assert conn.execute("SELECT cloud_pct, sunrise FROM rain.fetches WHERE source = 'met-no'").fetchone() == (None, None)
+
+
+def test_http_state_table_is_closed_to_the_api_roles(conn):
+    assert conn.execute("SELECT to_regclass('rain.http_state')").fetchone()[0] is not None
+    assert conn.execute("SELECT relrowsecurity FROM pg_class WHERE oid = 'rain.http_state'::regclass").fetchone()[0]

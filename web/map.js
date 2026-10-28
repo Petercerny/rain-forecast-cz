@@ -42,20 +42,24 @@
   const ambient = { mix: 0, lights: 0, mixTarget: 0, lightsTarget: 0, raf: 0 };
   let tintPlan = null;
 
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const mountIcon = (id, name) => { $(id).innerHTML = RF.UI_ICONS[name]; };
 
   // ---------------------------------------------------------------- what is shown for the current state
 
+  // "Now" = the Now tab, or the slider on its first hour: both show what the weather station measured.
+  const isNow = () => (state.mode === "hour" ? state.hour === 0 : state.period === "now");
   const dayKey = () => (state.period === "now" ? null : Number(state.period.slice(1)));  // d0 -> 0 ...
 
   function sceneFor(loc) {
-    if (state.mode === "hour") return Scene.atIndex(loc, Math.min(state.hour, loc.hourly.length - 1));
+    if (state.mode === "hour") return state.hour === 0 ? Scene.atNow(loc) : Scene.atIndex(loc, Math.min(state.hour, loc.hourly.length - 1));
     const k = dayKey();
-    return k == null ? Scene.atIndex(loc, 0) : Scene.fromDay(loc, k);
+    return k == null ? Scene.atNow(loc) : Scene.fromDay(loc, k);
   }
 
   // temperature, rain chance and rain amount for a marker
   function valuesFor(loc) {
+    if (isNow()) return Scene.nowValues(loc);   // the measurement when there is a fresh one
     if (state.mode === "hour") {
       const h = loc.hourly[Math.min(state.hour, loc.hourly.length - 1)];
       if (!h) return null;
@@ -220,8 +224,17 @@
     }
     if (!weather) { useCanvasFx(); return; }
     RF.weather = weather;  // handy in the browser console (RF.weather.info())
-    weather.setEnabled(RF.fx.get() === "on");
+    syncWeather();
     pushWeather();
+  }
+  // The rain radar (radar.js) is real measured rain, so the animated weather steps aside while it is on.
+  function attachRadar() {
+    if (typeof Radar === "undefined") return;
+    const firstLabel = map.getStyle().layers.find((l) => l.type === "symbol");
+    Radar.attach(map, { before: firstLabel && firstLabel.id, onToggle: syncWeather });
+  }
+  function syncWeather() {
+    if (weather) weather.setEnabled(RF.fx.get() === "on" && !(typeof Radar !== "undefined" && Radar.isOn()));
   }
   // Hand the scene of every place (and the shown time, light and wind) to the weather.
   function pushWeather() {
@@ -250,13 +263,14 @@
     });
     RF.map = map;  // handy in the browser console
     map.jumpTo(homeCamera(TILT));
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Measurements &amp; radar: <a href="https://opendata.chmi.cz/">ČHMÚ</a>' }), "bottom-right");
     map.on("style.load", () => {
       tintPlan = planTint();
       addLights();
       applyTint(ambient.mix);
       applyLights(ambient.lights);
       attachWeather();
+      attachRadar();
     });
     map.on("pitch", updateTiltButton);
     // The base style references a few icons we do not need; give them an empty image so MapLibre stays quiet.
@@ -448,8 +462,10 @@
     const chips = [];
     if (p) {
       chips.push(`${RF.UI_ICONS.drop} Rain chance ${RF.fmtPct(p.prob)}`);
-      chips.push(`${RF.fmtMm(p.rain_mm)} rain`);
-      chips.push(state.mode === "hour" ? RF.fmtTempC(p.temp) : state.period === "now" ? "Right now" : "Day's high");
+      const measured = isNow() && p.source === "measured" ? Scene.measuredLabel(loc) : null;
+      chips.push(`${RF.fmtMm(p.rain_mm)} ${measured ? "rain in the last hour" : "rain"}`);
+      if (measured) chips.push(esc(measured));
+      else chips.push(state.mode === "hour" ? RF.fmtTempC(p.temp) : state.period === "now" ? "Right now" : "Day's high");
     } else {
       chips.push("No data for this period");
     }
@@ -536,7 +552,7 @@
       if ($("sheet").classList.contains("open")) closeSheet(); else closeDrawer();
     });
     document.addEventListener("rf:thememode", setAmbientTargets);
-    document.addEventListener("rf:fx", () => { if (weather) weather.setEnabled(RF.fx.get() === "on"); });
+    document.addEventListener("rf:fx", syncWeather);
   }
 
   // ---------------------------------------------------------------- put the current state on screen

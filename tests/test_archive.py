@@ -389,3 +389,28 @@ def test_create_archiver_role_returns_a_connection_string(conn):
     assert conn.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'archiver'").fetchone()[0] is True
     conn.execute("ALTER ROLE archiver NOLOGIN")   # roles live outside the schema: put it back
     conn.commit()
+
+
+def test_storage_settings_accept_the_generic_and_the_old_r2_names(monkeypatch):
+    for name in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET", "S3_REGION",
+                 "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(RuntimeError, match="S3_ENDPOINT_URL"):
+        archive.s3_settings_from_env()
+
+    monkeypatch.setenv("S3_ENDPOINT_URL", "https://abc.storage.supabase.co/storage/v1/s3")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "s")
+    monkeypatch.setenv("S3_BUCKET", "rain-archive")
+    monkeypatch.setenv("S3_REGION", "eu-central-1")
+    assert archive.s3_settings_from_env() == {"endpoint": "https://abc.storage.supabase.co/storage/v1/s3", "key": "k",
+                                              "secret": "s", "bucket": "rain-archive", "region": "eu-central-1"}
+
+    for name in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET", "S3_REGION"):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "k2")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "s2")
+    monkeypatch.setenv("R2_BUCKET", "b2")
+    assert archive.s3_settings_from_env() == {"endpoint": "https://acct.r2.cloudflarestorage.com", "key": "k2",
+                                              "secret": "s2", "bucket": "b2", "region": "auto"}

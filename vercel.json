@@ -1,13 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "python -m src.build_site",
-  "outputDirectory": "site",
-  "rewrites": [{ "source": "/api/:path*", "destination": "/api/index" }],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "excludeFiles": "{tests/**,docs/**,site/**,web/**,build/**,data/**,.venv/**,.github/**,db/**}"
+      "includeFiles": "{site/**,sql/**,config/**}",
+      "excludeFiles": "{tests/**,docs/**,web/**,build/**,data/**,.venv/**,.github/**,db/**}"
     }
-  },
-  "crons": [{ "path": "/api/ingest", "schedule": "17 4 * * *" }]
+  }
 }

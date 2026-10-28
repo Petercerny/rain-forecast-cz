@@ -133,3 +133,28 @@ def test_the_site_shell_has_a_page_per_place_and_no_data_file(tmp_path):
     assert (site / "index.html").exists() and (site / "praha" / "index.html").exists()
     assert "Brno" in (site / "brno" / "index.html").read_text(encoding="utf-8")
     assert not (site / "data.json").exists()
+
+
+def test_the_app_serves_the_built_site_and_keeps_the_api_routes(tmp_path):
+    from fastapi import FastAPI
+    (tmp_path / "praha").mkdir()
+    (tmp_path / "index.html").write_text("<h1>map</h1>", encoding="utf-8")
+    (tmp_path / "praha" / "index.html").write_text("<h1>Praha</h1>", encoding="utf-8")
+    app = FastAPI()
+
+    @app.get("/api/ping")
+    def ping():
+        return {"ok": True}
+    web_app.mount_site(app, tmp_path)
+    c = TestClient(app)
+    assert c.get("/api/ping").json() == {"ok": True}          # the site mount does not shadow the API
+    assert "map" in c.get("/").text
+    assert "Praha" in c.get("/praha/").text
+    assert c.get("/nope").status_code == 404
+
+
+def test_missing_site_folder_is_not_an_error(tmp_path):
+    from fastapi import FastAPI
+    app = FastAPI()
+    web_app.mount_site(app, tmp_path / "does-not-exist")
+    assert TestClient(app).get("/").status_code == 404

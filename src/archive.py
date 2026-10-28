@@ -30,7 +30,9 @@ Usage:
                                                  # (needs no database; add --dry-run / --local-dir / --force)
 
 Environment: ARCHIVE_DATABASE_URL (the `archiver` role, see src/db_migrate.py --create-archiver-role),
-R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET. Needs pyarrow and boto3
+S3_ENDPOINT_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET and optionally S3_REGION: any S3-compatible
+storage (Supabase Storage, Cloudflare R2, Backblaze B2, MinIO ...). The old R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
+R2_SECRET_ACCESS_KEY / R2_BUCKET names still work for Cloudflare R2. Needs pyarrow and boto3
 (requirements-archive.txt). The `pipeline` role cannot delete; only `archiver` can.
 """
 import argparse
@@ -132,7 +134,7 @@ class LocalStore:
 
 
 class R2Store:
-    """A Cloudflare R2 bucket through its S3 API. `client` is a boto3 S3 client."""
+    """A bucket on any S3-compatible storage (Cloudflare R2, Supabase Storage ...). `client` is a boto3 S3 client."""
     durable = True
 
     def __init__(self, client, bucket: str):
@@ -154,28 +156,50 @@ class R2Store:
         return f"s3://{self.bucket}/{key}"
 
 
+def _env(*names: str) -> str | None:
+    """The first of these environment variables that is set and not empty."""
+    return next((os.environ[n] for n in names if os.environ.get(n)), None)
+
+
+def s3_settings_from_env() -> dict:
+    """Endpoint, keys, bucket and region of the archive storage, from S3_* (or the older R2_*) variables."""
+    endpoint = _env("S3_ENDPOINT_URL")
+    if not endpoint and os.environ.get("R2_ACCOUNT_ID"):
+        endpoint = f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com"
+    settings = {
+        "endpoint": endpoint,
+        "key": _env("S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID"),
+        "secret": _env("S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY"),
+        "bucket": _env("S3_BUCKET", "R2_BUCKET"),
+        "region": _env("S3_REGION") or "auto",
+    }
+    missing = [name for name, value in (("S3_ENDPOINT_URL", settings["endpoint"]), ("S3_ACCESS_KEY_ID", settings["key"]),
+                                        ("S3_SECRET_ACCESS_KEY", settings["secret"]), ("S3_BUCKET", settings["bucket"])) if not value]
+    if missing:
+        raise RuntimeError(f"{', '.join(missing)} not set (use --dry-run or --local-dir to run without storage)")
+    return settings
+
+
 def r2_store_from_env() -> R2Store:
     import boto3
     from botocore.config import Config
 
-    missing = [n for n in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET") if not os.environ.get(n)]
-    if missing:
-        raise RuntimeError(f"{', '.join(missing)} not set (use --dry-run or --local-dir to run without R2)")
+    cfg = s3_settings_from_env()
     client = boto3.client(
         "s3",
-        endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-        region_name="auto",
+        endpoint_url=cfg["endpoint"],
+        aws_access_key_id=cfg["key"],
+        aws_secret_access_key=cfg["secret"],
+        region_name=cfg["region"],
         config=Config(
             signature_version="s3v4",
             retries={"max_attempts": 5, "mode": "standard"},
-            # Recent boto3 adds CRC checksums by default, which R2 does not always accept.
+            # Recent boto3 adds CRC checksums by default, which R2 and some other S3 servers do not accept.
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
         ),
     )
-    return R2Store(client, os.environ["R2_BUCKET"])
+    return R2Store(client, cfg["bucket"])
 
 
 # ---------------------------------------------------------------- the datasets
@@ -512,7 +536,7 @@ def main() -> int:
 
     if args.local_dir:
         store = LocalStore(args.local_dir)
-    elif args.dry_run and not os.environ.get("R2_BUCKET"):
+    elif args.dry_run and not _env("S3_BUCKET", "R2_BUCKET"):
         store = NoStore()
     else:
         try:

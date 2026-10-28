@@ -106,7 +106,7 @@ You need free accounts at GitHub, [Supabase](https://supabase.com/) and [Vercel]
 
 1. Push this code to a GitHub repository. GitHub Actions only runs the tests (`.github/workflows/tests.yml`).
 2. [Set up the database](#set-up-the-database) first (below), then:
-3. **Vercel → Add New Project → import the repository.** `vercel.json` already sets the build command (`python -m src.build_site`) and the output folder (`site`). Add these **environment variables**:
+3. **Vercel → Add New Project → import the repository.** `vercel.json` already sets the build command (`python -m src.build_site`). Vercel recognises the FastAPI app and sends every request to it; the app serves the built pages from `site/` itself and `/api/*` as routes. Add these **environment variables**:
    - `DATABASE_URL`: the `pipeline` role's connection string from the next section.
    - `USER_AGENT` = `rain-forecast-cz/0.1 https://github.com/<you>/<repo>` (MET Norway blocks anonymous clients).
    - `INGEST_SECRET`: any long random string. Only callers that send it can trigger `/api/ingest`.
@@ -117,7 +117,7 @@ You need free accounts at GitHub, [Supabase](https://supabase.com/) and [Vercel]
 curl -X POST -H "Authorization: Bearer <INGEST_SECRET>" https://<your-project>.vercel.app/api/ingest
 ```
 
-5. **Schedule it**: apply `db/cron/ingest_schedule.sql` in the Supabase SQL editor (it enables `pg_cron` and `pg_net`, stores the secret in the Vault and calls `/api/ingest` every 10 minutes). `vercel.json` also has a once-a-day cron on the same endpoint as a safety net, because the free Vercel plan allows nothing more frequent.
+5. **Schedule it**: apply `db/cron/ingest_schedule.sql` in the Supabase SQL editor (it enables `pg_cron` and `pg_net`, stores the secret in the Vault and calls `/api/ingest` every 10 minutes).
 6. Add an uptime monitor on `/api/health` (UptimeRobot, Better Stack: both have free plans) so you get an e-mail when data stops arriving.
 
 Why Supabase and not GitHub Actions or Vercel Cron as the scheduler? GitHub's scheduled workflows are best effort: this project saw 4 runs in 20 hours instead of 20. Vercel Cron runs once a day on the free plan. `pg_cron` runs on time.
@@ -147,9 +147,9 @@ The free plan **pauses a project after a week of low activity** and has **no aut
 - To see whether the schedule fires, in the Supabase SQL editor: `SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 10;` and `SELECT created, status_code, content FROM net._http_response ORDER BY created DESC LIMIT 10;`.
 - The website shows an "outdated" banner when its data is older than `stale_banner_after_hours` (6). It is checked in the visitor's browser, so it also works when the whole pipeline has stopped.
 
-### Long-term archive (Cloudflare R2)
+### Long-term archive (S3-compatible storage)
 
-Postgres keeps only the newest **15 days**. Every night `.github/workflows/archive.yml` runs `python -m src.archive`, which copies each finished UTC day older than 2 days to a Parquet file (zstd) in a Cloudflare R2 bucket, downloads the file again and compares its row count with Postgres, records the day in `rain.archive_log`, and only then deletes rows older than 15 days **for days that were verified**. This is the history for scoring forecasts and training a correction model. Total loss of the database costs at most the ~2 days that are not archived yet.
+Postgres keeps only the newest **15 days**. Every night `.github/workflows/archive.yml` runs `python -m src.archive`, which copies each finished UTC day older than 2 days to a Parquet file (zstd) in an S3-compatible bucket (Supabase Storage, Cloudflare R2, Backblaze B2 ...), downloads the file again and compares its row count with Postgres, records the day in `rain.archive_log`, and only then deletes rows older than 15 days **for days that were verified**. This is the history for scoring forecasts and training a correction model. Total loss of the database costs at most the ~2 days that are not archived yet.
 
 Layout (hive style, so DuckDB and Spark can prune on source and date; `source` and `date` come from the path, not from columns):
 
@@ -161,51 +161,52 @@ observations/date=2026-10-25/part.parquet                    # skipped while rai
 
 Forecast files hold long rows, one per forecast hour of one fetch: `location_slug, fetched_at, source_updated_at, hour_start, lead_hours` plus the hourly values (`precip_mm`, `temp_c`, `cloud_pct`, ...). `lead_hours` is the hours from `fetched_at` to `hour_start` (the first hour of a fetch is slightly negative, because it starts before the fetch).
 
-**Set it up** (once; the free R2 plan has 10 GB and no egress fees, which is plenty):
+**Set it up** (once). The archive is small, roughly 50 to 100 MB a year, so Supabase Storage's free 1 GB (no credit card) is enough for years. Cloudflare R2 (10 GB, but asks for a card) or Backblaze B2 work the same way, only the endpoint differs.
 
-1. In the Cloudflare dashboard create an R2 bucket and an **API token** (R2 → Manage API tokens, permission *Object Read & Write*, limited to that bucket). Note the account id, access key id and secret.
+1. **Supabase Storage** (Dashboard → Storage): create a **private** bucket, e.g. `rain-archive`. Then open the storage **S3 configuration** page (Storage → Settings, "S3 Connection"), note the **endpoint** (it looks like `https://<project-ref>.storage.supabase.co/storage/v1/s3`) and the **region**, and create an **access key** (key id + secret). *For R2 instead:* create a bucket and an API token with *Object Read & Write*, and use `https://<account-id>.r2.cloudflarestorage.com` as the endpoint (region `auto`).
 2. Apply the migration and create the `archiver` role with your admin connection (it can read and delete data, so keep its URL out of Vercel):
 
 ```bash
 python -m src.db_migrate --create-archiver-role   # prints the archiver connection string once
 ```
 
-3. Add these GitHub repository **secrets**: `ARCHIVE_DATABASE_URL` (that string), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`.
-4. Try it without any R2 credentials, reading Postgres only (`pip install -r requirements.txt -r requirements-archive.txt` first):
+3. Add these GitHub repository **secrets**: `ARCHIVE_DATABASE_URL` (that string), `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET` and `S3_REGION` (the region from step 1). The older `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` names still work for R2.
+4. Try it without any storage credentials, reading Postgres only (`pip install -r requirements.txt -r requirements-archive.txt` first):
 
 ```bash
 ARCHIVE_DATABASE_URL=... python -m src.archive --dry-run            # what would be uploaded and deleted
 ARCHIVE_DATABASE_URL=... python -m src.archive --local-dir archive  # write the files to a folder; nothing is logged or deleted
 ```
 
-   Then run the workflow by hand (Actions → Archive to R2 → Run workflow, with *Dry run* ticked the first time).
-5. Move the old history out of the `data` branch (needs no database, only `git fetch origin data` and the R2 variables):
+   Then run the workflow by hand (Actions → Archive to object storage → Run workflow, with *Dry run* ticked the first time).
+5. Move the old history out of the `data` branch (needs no database, only `git fetch origin data` and the `S3_*` variables):
 
 ```bash
 python -m src.archive --from-data-branch --dry-run   # list the days it would convert
 python -m src.archive --from-data-branch
 ```
 
-   Only days before today are converted; a day that is already in R2 is skipped (`--force` overwrites). The nightly job later replaces a day with the Postgres version of the same data, but never with a smaller file.
+   Only days before today are converted; a day that is already in the bucket is skipped (`--force` overwrites). The nightly job later replaces a day with the Postgres version of the same data, but never with a smaller file.
 
-**Read it with DuckDB** (an R2 secret needs your account id and the token above):
+**Read it with DuckDB** (shown for Supabase Storage; for R2 use `TYPE r2` with `ACCOUNT_ID` instead of `ENDPOINT`):
 
 ```sql
 INSTALL httpfs; LOAD httpfs;
-CREATE SECRET r2 (TYPE r2, KEY_ID '<access key id>', SECRET '<secret>', ACCOUNT_ID '<account id>');
+CREATE SECRET archive (TYPE s3, KEY_ID '<access key id>', SECRET '<secret>', REGION '<region>',
+                       ENDPOINT '<project-ref>.storage.supabase.co/storage/v1/s3', URL_STYLE 'path');
 
 -- every forecast ever archived; union_by_name copes with columns that were added later
-SELECT * FROM read_parquet('r2://<bucket>/forecasts/*/*/part.parquet', hive_partitioning = true, union_by_name = true) LIMIT 10;
+SELECT * FROM read_parquet('s3://<bucket>/forecasts/*/*/part.parquet', hive_partitioning = true, union_by_name = true) LIMIT 10;
 
 -- How wrong is each source's temperature forecast, by lead time? Measured at Praha-Ruzyně vs the forecast for Praha.
 -- (Look the station id up in config/locations.yaml; the readings are every 10 minutes, so keep the full hours.)
 WITH f AS (
     SELECT source, hour_start, temp_c AS forecast_c, round(lead_hours / 6) * 6 AS lead_bucket_h
-    FROM read_parquet('r2://<bucket>/forecasts/*/*/part.parquet', hive_partitioning = true, union_by_name = true)
+    FROM read_parquet('s3://<bucket>/forecasts/*/*/part.parquet', hive_partitioning = true, union_by_name = true)
     WHERE location_slug = 'praha' AND lead_hours >= 0
 ), o AS (
     SELECT observed_at, temp_c AS measured_c
-    FROM read_parquet('r2://<bucket>/observations/*/part.parquet', hive_partitioning = true, union_by_name = true)
+    FROM read_parquet('s3://<bucket>/observations/*/part.parquet', hive_partitioning = true, union_by_name = true)
     WHERE station_wsi = '0-20000-0-11518' AND date_part('minute', observed_at) = 0
 )
 SELECT source, lead_bucket_h, count(*) AS n, round(avg(abs(forecast_c - measured_c)), 2) AS mean_abs_error_c
